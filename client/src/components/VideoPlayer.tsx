@@ -129,16 +129,18 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
 
       try {
         if (!isFullscreen) {
-          await containerRef.current.requestFullscreen?.() ||
-            (containerRef.current as any).webkitRequestFullscreen?.() ||
-            (containerRef.current as any).mozRequestFullScreen?.() ||
-            (containerRef.current as any).msRequestFullscreen?.();
+          if (containerRef.current.requestFullscreen) {
+            await containerRef.current.requestFullscreen();
+          } else if ((containerRef.current as any).webkitRequestFullscreen) {
+            await (containerRef.current as any).webkitRequestFullscreen();
+          }
           setIsFullscreen(true);
         } else {
-          await document.exitFullscreen?.() ||
-            (document as any).webkitExitFullscreen?.() ||
-            (document as any).mozCancelFullScreen?.() ||
-            (document as any).msExitFullscreen?.();
+          if (document.exitFullscreen) {
+            await document.exitFullscreen();
+          } else if ((document as any).webkitExitFullscreen) {
+            await (document as any).webkitExitFullscreen();
+          }
           setIsFullscreen(false);
         }
       } catch (err) {
