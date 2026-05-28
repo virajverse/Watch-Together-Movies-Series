@@ -1,0 +1,43 @@
+/**
+ * Global Styles
+ */
+
+@import "tailwindcss/base";
+@import "tailwindcss/components";
+@import "tailwindcss/utilities";
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1a1a1a;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #666;
+}
+
+/* Smooth transitions */
+* {
+  @apply transition-colors duration-200;
+}
+
+/* Video player smooth playback */
+video {
+  object-fit: contain;
+}
+
+/* Focus styles */
+input:focus,
+button:focus,
+textarea:focus {
+  @apply outline-none ring-2 ring-blue-500;
+}
