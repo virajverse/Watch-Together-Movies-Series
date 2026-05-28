@@ -160,3 +160,29 @@ export interface ProcessingJob {
   progress: number;
   createdAt: number;
 }
+
+// ============================================================================
+// MVP3 - Voice/Video/Chat Types
+// ============================================================================
+
+export interface ChatMessage {
+  id: string;
+  userId: string;
+  text: string;
+  timestamp: number;
+}
+
+export interface EmojiReaction {
+  id: string;
+  userId: string;
+  emoji: string;
+  timestamp: number;
+}
+
+export interface PeerMediaState {
+  oderId: string;
+  isMicOn: boolean;
+  isCameraOn: boolean;
+  isSpeaking: boolean;
+  isInVoice: boolean;
+}

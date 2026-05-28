@@ -19,6 +19,8 @@ dotenv.config({ path: ".env.local" });
 import { setupRoomHandlers } from "./socket/rooms.ts";
 import { setupPlaybackHandlers } from "./socket/playback.ts";
 import { setupSyncHandlers, startHeartbeatServer } from "./socket/sync.ts";
+import { setupWebRTCHandlers } from "./socket/webrtc.ts";
+import { setupChatHandlers } from "./socket/chat.ts";
 
 // Import MVP2 modules
 import { createUploadRouter } from "./routes/upload.ts";
@@ -155,6 +157,8 @@ io.on("connection", (socket) => {
   setupRoomHandlers(socket, io, rooms);
   setupPlaybackHandlers(socket, io, rooms);
   setupSyncHandlers(socket, io, rooms);
+  setupWebRTCHandlers(socket, io, rooms);
+  setupChatHandlers(socket, io, rooms);
 
   // Error handler
   socket.on("error", (error) => {

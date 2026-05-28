@@ -55,6 +55,17 @@ export const SOCKET_EVENTS = {
   PROCESSING_PROGRESS: "processing-progress",
   PROCESSING_COMPLETE: "processing-complete",
   PROCESSING_FAILED: "processing-failed",
+
+  // MVP3 - Voice/Video/Chat
+  WEBRTC_OFFER: "webrtc-offer",
+  WEBRTC_ANSWER: "webrtc-answer",
+  WEBRTC_ICE: "webrtc-ice-candidate",
+  WEBRTC_JOIN: "webrtc-join",
+  WEBRTC_LEAVE: "webrtc-leave",
+  MIC_TOGGLE: "mic-toggle",
+  CAMERA_TOGGLE: "camera-toggle",
+  CHAT_MESSAGE: "chat-message",
+  EMOJI_REACTION: "emoji-reaction",
 };
 
 // Status Messages

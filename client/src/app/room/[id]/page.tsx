@@ -10,6 +10,7 @@
  * 3. Show autoplay unlock overlay (one-time)
  * 4. Join room via socket
  * 5. After unlock, all sync events work automatically
+ * 6. MVP3: Voice/video chat, live chat, emoji reactions
  */
 
 import React, { useEffect, useRef, useState } from "react";
@@ -18,10 +19,16 @@ import { v4 as uuidv4 } from "uuid";
 import { socketClient } from "../../../lib/socket";
 import { useRoom } from "../../../hooks/useRoom";
 import { useVideoSync } from "../../../hooks/useVideoSync";
+import { useWebRTC } from "../../../hooks/useWebRTC";
+import { useChat } from "../../../hooks/useChat";
 import { VideoPlayer } from "../../../components/VideoPlayer";
 import { RoomHeader } from "../../../components/RoomHeader";
 import { UsersConnected } from "../../../components/UsersConnected";
 import { AutoplayUnlock } from "../../../components/AutoplayUnlock";
+import { CameraBubbles } from "../../../components/CameraBubbles";
+import { MediaControls } from "../../../components/MediaControls";
+import { ChatPanel } from "../../../components/ChatPanel";
+import { EmojiReactions } from "../../../components/EmojiReactions";
 import { SOCKET_EVENTS } from "../../../../shared/constants";
 
 export default function RoomPage() {
@@ -44,6 +51,11 @@ export default function RoomPage() {
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [playbackUnlocked, setPlaybackUnlocked] = useState(false);
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [mobileTab, setMobileTab] = useState<"chat" | "people" | "none">("none");
+  const [isVideoSticky, setIsVideoSticky] = useState(false);
+  const videoWrapperRef = useRef<HTMLDivElement>(null);
 
   // Custom hooks
   const { room, users, error: roomError, isLoading, joinRoom } = useRoom({
@@ -63,6 +75,54 @@ export default function RoomPage() {
     userId: userId || "",
     playerRef: videoPlayerRef,
   });
+
+  // MVP3 - WebRTC voice/video
+  const {
+    joinVoice,
+    leaveVoice,
+    toggleMic,
+    toggleCamera,
+    isMicOn,
+    isCameraOn,
+    isSpeaking,
+    isInVoice,
+    peers,
+    localStream,
+    permissionError,
+  } = useWebRTC({ roomId, userId: userId || "" });
+
+  // MVP3 - Chat & reactions
+  const { messages, sendMessage, sendReaction, reactions } = useChat({
+    roomId,
+    userId: userId || "",
+  });
+
+  // Track unread messages when chat is closed
+  useEffect(() => {
+    if (!isChatOpen && messages.length > 0) {
+      setUnreadCount((prev) => prev + 1);
+    }
+  }, [messages.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reset unread when chat opens
+  useEffect(() => {
+    if (isChatOpen || mobileTab === "chat") {
+      setUnreadCount(0);
+    }
+  }, [isChatOpen, mobileTab]);
+
+  // Sticky video detection on mobile
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleScroll = () => {
+      if (videoWrapperRef.current) {
+        const rect = videoWrapperRef.current.getBoundingClientRect();
+        setIsVideoSticky(rect.top <= 0);
+      }
+    };
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
 
   /**
    * Initialize on mount
@@ -144,6 +204,10 @@ export default function RoomPage() {
    * Handle leave room
    */
   const handleLeaveRoom = () => {
+    // Leave voice if in voice
+    if (isInVoice) {
+      leaveVoice();
+    }
     socketClient.emit(SOCKET_EVENTS.LEAVE_ROOM, { roomId, userId });
     router.push("/");
   };
@@ -227,15 +291,52 @@ export default function RoomPage() {
         )}
 
         {/* Main Content - Cinema Layout */}
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5">
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5 pb-20 lg:pb-0">
           {/* Video Player Area */}
           <div className="space-y-4">
-            <VideoPlayer
-              ref={videoPlayerRef}
-              videoUrl={videoUrl}
-              onPlay={broadcastPlay}
-              onPause={broadcastPause}
-              onSeek={broadcastSeek}
+            {/* Sticky Video Wrapper (mobile) */}
+            <div
+              ref={videoWrapperRef}
+              className={`video-sticky-wrapper ${isVideoSticky ? "is-sticky" : ""}`}
+            >
+              <div className="relative">
+                <VideoPlayer
+                  ref={videoPlayerRef}
+                  videoUrl={videoUrl}
+                  onPlay={broadcastPlay}
+                  onPause={broadcastPause}
+                  onSeek={broadcastSeek}
+                />
+
+              {/* Camera Bubbles - top right over video */}
+              <CameraBubbles
+                peers={peers.map((p) => ({
+                  peerId: p.peerId,
+                  stream: p.stream,
+                  isMicOn: p.isMicOn,
+                  isCameraOn: p.isCameraOn,
+                }))}
+                localStream={localStream}
+                isCameraOn={isCameraOn}
+                currentUserId={userId}
+              />
+
+              {/* Emoji Reactions Overlay */}
+              <EmojiReactions reactions={reactions} />
+              </div>
+            </div>
+
+            {/* Media Controls - Voice/Camera */}
+            <MediaControls
+              isInVoice={isInVoice}
+              isMicOn={isMicOn}
+              isCameraOn={isCameraOn}
+              isSpeaking={isSpeaking}
+              onJoinVoice={joinVoice}
+              onLeaveVoice={leaveVoice}
+              onToggleMic={toggleMic}
+              onToggleCamera={toggleCamera}
+              permissionError={permissionError}
             />
 
             {/* Video URL Controls */}
@@ -320,9 +421,57 @@ export default function RoomPage() {
 
           {/* Sidebar */}
           <div className="space-y-4">
+            {/* Chat Toggle Button (mobile-friendly) */}
+            <button
+              onClick={() => setIsChatOpen(!isChatOpen)}
+              className={`w-full flex items-center justify-between py-3 px-4 rounded-xl text-sm font-medium transition-all duration-200 ${
+                isChatOpen
+                  ? "bg-primary-600/20 text-primary-400 border border-primary-500/30"
+                  : "glass-card text-gray-300 hover:text-white"
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" />
+                </svg>
+                {isChatOpen ? "Hide Chat" : "Show Chat"}
+              </span>
+              {!isChatOpen && unreadCount > 0 && (
+                <span className="bg-primary-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
+                  {unreadCount > 99 ? "99+" : unreadCount}
+                </span>
+              )}
+            </button>
+
+            {/* Chat Panel - toggleable */}
+            {isChatOpen && (
+              <ChatPanel
+                messages={messages}
+                currentUserId={userId}
+                onSendMessage={sendMessage}
+                onSendReaction={sendReaction}
+              />
+            )}
+
             {/* Users */}
             {room && (
-              <UsersConnected users={users} currentUserId={userId} />
+              <UsersConnected
+                users={users}
+                currentUserId={userId}
+                mediaStates={peers.map((p) => ({
+                  oderId: p.peerId,
+                  isMicOn: p.isMicOn,
+                  isCameraOn: p.isCameraOn,
+                  isSpeaking: p.isSpeaking,
+                  isInVoice: true,
+                }))}
+                localMediaState={{
+                  isInVoice,
+                  isMicOn,
+                  isCameraOn,
+                  isSpeaking,
+                }}
+              />
             )}
 
             {/* Leave Room - subtle */}
@@ -347,7 +496,7 @@ export default function RoomPage() {
               <ul className="text-gray-400 text-xs space-y-2 leading-relaxed">
                 <li className="flex items-start gap-2">
                   <span className="text-primary-400 mt-0.5">•</span>
-                  Tap "Start Watching" once to enable sync
+                  Tap &quot;Start Watching&quot; once to enable sync
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-primary-400 mt-0.5">•</span>
@@ -355,7 +504,11 @@ export default function RoomPage() {
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-primary-400 mt-0.5">•</span>
-                  Auto-syncs if drift detected (&gt;500ms)
+                  Join Voice to talk with friends while watching
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-primary-400 mt-0.5">•</span>
+                  Use Chat to send messages and emoji reactions
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-primary-400 mt-0.5">•</span>
@@ -366,6 +519,101 @@ export default function RoomPage() {
           </div>
         </div>
       </div>
+
+      {/* Mobile Bottom Tab Bar */}
+      <div className="mobile-tab-bar lg:hidden">
+        <div className="flex items-center justify-around">
+          {/* Voice Button */}
+          <button
+            onClick={isInVoice ? leaveVoice : joinVoice}
+            className={`tab-btn ${isInVoice ? "active" : ""}`}
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
+            </svg>
+            <span>{isInVoice ? "In Voice" : "Voice"}</span>
+          </button>
+
+          {/* Chat Button */}
+          <button
+            onClick={() => setMobileTab(mobileTab === "chat" ? "none" : "chat")}
+            className={`tab-btn relative ${mobileTab === "chat" ? "active" : ""}`}
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" />
+            </svg>
+            <span>Chat</span>
+            {unreadCount > 0 && mobileTab !== "chat" && (
+              <span className="absolute -top-1 -right-1 bg-primary-500 text-white text-[8px] font-bold w-4 h-4 rounded-full flex items-center justify-center">
+                {unreadCount > 9 ? "9+" : unreadCount}
+              </span>
+            )}
+          </button>
+
+          {/* Emoji Reactions */}
+          <div className="flex items-center gap-1">
+            {["😂", "❤️", "🔥", "😱"].map((emoji) => (
+              <button
+                key={emoji}
+                onClick={() => sendReaction(emoji)}
+                className="text-lg p-1.5 hover:scale-125 active:scale-90 transition-transform"
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+
+          {/* People Button */}
+          <button
+            onClick={() => setMobileTab(mobileTab === "people" ? "none" : "people")}
+            className={`tab-btn ${mobileTab === "people" ? "active" : ""}`}
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" />
+            </svg>
+            <span>{users.length}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Mobile Chat Panel (slides up from bottom) */}
+      {mobileTab === "chat" && (
+        <div className="chat-mobile-panel lg:hidden">
+          <ChatPanel
+            messages={messages}
+            currentUserId={userId}
+            onSendMessage={sendMessage}
+            onSendReaction={sendReaction}
+          />
+        </div>
+      )}
+
+      {/* Mobile People Panel */}
+      {mobileTab === "people" && (
+        <div className="chat-mobile-panel lg:hidden">
+          <div className="p-4">
+            {room && (
+              <UsersConnected
+                users={users}
+                currentUserId={userId}
+                mediaStates={peers.map((p) => ({
+                  oderId: p.peerId,
+                  isMicOn: p.isMicOn,
+                  isCameraOn: p.isCameraOn,
+                  isSpeaking: p.isSpeaking,
+                  isInVoice: true,
+                }))}
+                localMediaState={{
+                  isInVoice,
+                  isMicOn,
+                  isCameraOn,
+                  isSpeaking,
+                }}
+              />
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
