@@ -127,4 +127,31 @@ export function setupPlaybackHandlers(
       timestamp_ms,
     });
   });
+
+  /**
+   * Handler: video-change
+   * Host changes the video URL - broadcast to all users
+   */
+  socket.on("video-change", (data: { roomId: string; userId: string; videoUrl: string }) => {
+    const { roomId, userId, videoUrl } = data;
+
+    const room = rooms.get(roomId);
+    if (!room) return;
+
+    // Update room video URL
+    room.videoUrl = videoUrl;
+
+    // Reset playback state
+    room.playbackState = {
+      isPlaying: false,
+      currentTime: 0,
+      lastUpdatedAt: Date.now(),
+      updatedBy: userId,
+    };
+
+    console.log(`[PLAYBACK] Video changed by ${userId} in room ${roomId}: ${videoUrl.substring(0, 50)}...`);
+
+    // Broadcast to ALL users in room (including sender for confirmation)
+    io.to(roomId).emit("video-changed", { userId, videoUrl });
+  });
 }

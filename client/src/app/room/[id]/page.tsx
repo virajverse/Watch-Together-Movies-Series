@@ -101,6 +101,24 @@ export default function RoomPage() {
   }, [userId, isConnected, joinRoom]);
 
   /**
+   * Listen for video change from other users
+   */
+  useEffect(() => {
+    const handleVideoChanged = (data: { userId: string; videoUrl: string }) => {
+      if (data.userId !== userId) {
+        console.log(`[ROOM] Video changed by ${data.userId.substring(0, 6)} to: ${data.videoUrl}`);
+        setVideoUrl(data.videoUrl);
+        setUrlInput(data.videoUrl);
+      }
+    };
+
+    socketClient.on("video-changed" as any, handleVideoChanged);
+    return () => {
+      socketClient.off("video-changed" as any, handleVideoChanged);
+    };
+  }, [userId]);
+
+  /**
    * Handle autoplay unlock success
    */
   const handlePlaybackUnlocked = () => {
@@ -110,13 +128,15 @@ export default function RoomPage() {
   };
 
   /**
-   * Handle video URL update
+   * Handle video URL update - broadcast to all users in room
    */
   const handleUpdateVideoUrl = (e: React.FormEvent) => {
     e.preventDefault();
     if (urlInput.trim()) {
       setVideoUrl(urlInput);
       setShowUrlInput(false);
+      // Broadcast video change to all users
+      socketClient.emit("video-change" as any, { roomId, userId, videoUrl: urlInput });
     }
   };
 
@@ -250,6 +270,8 @@ export default function RoomPage() {
                             if (idx >= 0 && idx < readyVideos.length) {
                               setVideoUrl(readyVideos[idx].streamPath);
                               setUrlInput(readyVideos[idx].streamPath);
+                              // Broadcast video change to all users
+                              socketClient.emit("video-change" as any, { roomId, userId, videoUrl: readyVideos[idx].streamPath });
                             }
                           }
                         } else {
