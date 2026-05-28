@@ -30,7 +30,7 @@ export default function RoomPage() {
   const router = useRouter();
 
   const roomId = params.id as string;
-  const roomCode = searchParams.get("code") || "UNKNOWN";
+  const roomCode = searchParams.get("code") || roomId.substring(0, 6).toUpperCase();
 
   // Video player ref
   const videoPlayerRef = useRef<HTMLVideoElement>(null);
@@ -219,17 +219,54 @@ export default function RoomPage() {
             />
 
             {/* Video URL Controls */}
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               {!showUrlInput ? (
-                <button
-                  onClick={() => setShowUrlInput(true)}
-                  className="flex items-center gap-2 text-gray-400 hover:text-primary-400 text-sm font-medium transition-colors px-3 py-2 rounded-xl hover:bg-surface-glass-hover"
-                >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m9.86-2.556a4.5 4.5 0 00-1.242-7.244l-4.5-4.5a4.5 4.5 0 00-6.364 6.364L4.343 8.69" />
-                  </svg>
-                  Change Video
-                </button>
+                <>
+                  <button
+                    onClick={() => setShowUrlInput(true)}
+                    className="flex items-center gap-2 text-gray-400 hover:text-primary-400 text-sm font-medium transition-colors px-3 py-2 rounded-xl hover:bg-surface-glass-hover"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m9.86-2.556a4.5 4.5 0 00-1.242-7.244l-4.5-4.5a4.5 4.5 0 00-6.364 6.364L4.343 8.69" />
+                    </svg>
+                    Paste URL
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const API_URL = process.env.NEXT_PUBLIC_WS_URL || "http://localhost:3001";
+                      try {
+                        const res = await fetch(`${API_URL}/api/videos`);
+                        const data = await res.json();
+                        if (data.success && data.data.length > 0) {
+                          const readyVideos = data.data.filter((v: any) => v.status === "ready");
+                          if (readyVideos.length === 0) {
+                            alert("No videos ready yet. Upload and process a video first.");
+                            return;
+                          }
+                          const names = readyVideos.map((v: any, i: number) => `${i + 1}. ${v.originalName}`).join("\n");
+                          const choice = prompt(`Select a video (enter number):\n\n${names}`);
+                          if (choice) {
+                            const idx = parseInt(choice) - 1;
+                            if (idx >= 0 && idx < readyVideos.length) {
+                              setVideoUrl(readyVideos[idx].streamPath);
+                              setUrlInput(readyVideos[idx].streamPath);
+                            }
+                          }
+                        } else {
+                          alert("No videos in library. Go to /upload to add videos.");
+                        }
+                      } catch {
+                        alert("Could not fetch video library. Is the server running?");
+                      }
+                    }}
+                    className="flex items-center gap-2 text-gray-400 hover:text-primary-400 text-sm font-medium transition-colors px-3 py-2 rounded-xl hover:bg-surface-glass-hover"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h1.5C5.496 19.5 6 18.996 6 18.375m-3.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-1.5A1.125 1.125 0 0118 18.375M20.625 4.5H3.375m17.25 0c.621 0 1.125.504 1.125 1.125M20.625 4.5h-1.5C18.504 4.5 18 5.004 18 5.625m3.75 0v1.5c0 .621-.504 1.125-1.125 1.125M3.375 4.5c-.621 0-1.125.504-1.125 1.125M3.375 4.5h1.5C5.496 4.5 6 5.004 6 5.625m-3.75 0v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m17.25-3.75h-7.5c-.621 0-1.125.504-1.125 1.125m8.625-1.125c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125M12 10.875v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125" />
+                    </svg>
+                    Browse Library
+                  </button>
+                </>
               ) : (
                 <form onSubmit={handleUpdateVideoUrl} className="flex gap-2 flex-1 animate-slide-up">
                   <input

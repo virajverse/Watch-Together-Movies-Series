@@ -216,19 +216,22 @@ async function transcodeToHLS(
       const qualityWeight = 75 / totalQualities;
 
       await new Promise<void>((resolve, reject) => {
+        const segmentPattern = path.join(qualityDir, "segment_%03d.ts");
+        const playlistOutput = path.join(qualityDir, "playlist.m3u8");
+
         const command = ffmpeg(inputPath)
           .outputOptions([
-            `-vf scale=${quality.width}:${quality.height}:force_original_aspect_ratio=decrease,pad=${quality.width}:${quality.height}:(ow-iw)/2:(oh-ih)/2`,
-            `-c:v libx264`,
-            `-b:v ${quality.bitrate}`,
-            `-c:a aac`,
-            `-b:a 128k`,
-            `-hls_time ${HLS_CONFIG.SEGMENT_DURATION}`,
-            `-hls_list_size 0`,
-            `-hls_segment_filename ${qualityDir}/segment_%03d.ts`,
-            `-f hls`,
+            `-vf`, `scale=${quality.width}:${quality.height}:force_original_aspect_ratio=decrease,pad=${quality.width}:${quality.height}:(ow-iw)/2:(oh-ih)/2`,
+            `-c:v`, `libx264`,
+            `-b:v`, `${quality.bitrate}`,
+            `-c:a`, `aac`,
+            `-b:a`, `128k`,
+            `-hls_time`, `${HLS_CONFIG.SEGMENT_DURATION}`,
+            `-hls_list_size`, `0`,
+            `-hls_segment_filename`, segmentPattern,
+            `-f`, `hls`,
           ])
-          .output(path.join(qualityDir, "playlist.m3u8"))
+          .output(playlistOutput)
           .on("progress", (info) => {
             const qualityProgress = info.percent || 0;
             const totalProgress = baseProgress + (qualityProgress / 100) * qualityWeight;

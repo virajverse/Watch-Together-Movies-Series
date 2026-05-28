@@ -36,51 +36,95 @@ export default function Home() {
   }, []);
 
   /**
-   * Create a new room
+   * Create a new room via server API
    */
   const handleCreateRoom = async () => {
     setIsConnecting(true);
     setError(null);
 
     try {
-      // Create new room ID and user ID
+      const API_URL = process.env.NEXT_PUBLIC_WS_URL || "http://localhost:3001";
+      const res = await fetch(`${API_URL}/api/rooms`, { method: "POST" });
+      const data = await res.json();
+
+      if (data.success) {
+        const userId = uuidv4();
+        sessionStorage.setItem("userId", userId);
+        // Navigate with room code in URL
+        router.push(`/room/${data.data.roomId}?code=${data.data.roomCode}`);
+      } else {
+        throw new Error("Server failed to create room");
+      }
+    } catch (err) {
+      // Fallback: create locally if server unreachable
       const roomId = uuidv4();
       const userId = uuidv4();
-
-      // Store in sessionStorage for the room page
+      const code = generateCode();
       sessionStorage.setItem("userId", userId);
-      sessionStorage.setItem("userRoomId", roomId);
-
-      // Navigate to room page
-      router.push(`/room/${roomId}`);
-    } catch (err) {
-      console.error("[HOME] Error creating room:", err);
-      setError("Failed to create room. Please try again.");
-      setIsConnecting(false);
+      router.push(`/room/${roomId}?code=${code}`);
     }
   };
 
   /**
-   * Join room by code
+   * Generate a 6-char room code
    */
-  const handleJoinByCode = (e: React.FormEvent) => {
+  function generateCode(): string {
+    const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const numbers = "0123456789";
+    let code = "";
+    for (let i = 0; i < 3; i++) code += letters.charAt(Math.floor(Math.random() * letters.length));
+    for (let i = 0; i < 3; i++) code += numbers.charAt(Math.floor(Math.random() * numbers.length));
+    return code;
+  }
+
+  /**
+   * Join room by code - looks up room ID from server
+   */
+  const handleJoinByCode = async (e: React.FormEvent) => {
     e.preventDefault();
     setJoinError(null);
 
     if (!roomCode.trim()) {
-      setJoinError("Please enter a room code");
+      setJoinError("Please enter a room code or paste a room link");
       return;
     }
 
-    // In a real app, we'd verify the code with the server first
-    // For MVP, we'll just navigate to the room
     const userId = uuidv4();
     sessionStorage.setItem("userId", userId);
 
-    // Note: In production, you'd need to lookup the room ID from the code
-    // For now, we'll create a derived room ID from the code
-    // This should be replaced with a proper lookup API
-    alert("Join by code feature requires server implementation. Use the link instead.");
+    const input = roomCode.trim();
+
+    // Check if user pasted a full URL
+    if (input.includes("/room/")) {
+      const match = input.match(/\/room\/([a-zA-Z0-9-]+)/);
+      if (match) {
+        router.push(`/room/${match[1]}`);
+        return;
+      }
+    }
+
+    // If it's a UUID (from shared link), navigate directly
+    if (input.includes("-") && input.length > 20) {
+      router.push(`/room/${input}`);
+      return;
+    }
+
+    // Try to look up room code from server
+    try {
+      const API_URL = process.env.NEXT_PUBLIC_WS_URL || "http://localhost:3001";
+      const res = await fetch(`${API_URL}/api/rooms/code/${input}`);
+      const data = await res.json();
+
+      if (data.success) {
+        router.push(`/room/${data.data.roomId}?code=${data.data.code}`);
+      } else {
+        // Code not found - try navigating directly (room will be created on join)
+        router.push(`/room/${input}?code=${input}`);
+      }
+    } catch {
+      // Server unreachable - navigate directly
+      router.push(`/room/${input}?code=${input}`);
+    }
   };
 
   return (
@@ -178,11 +222,10 @@ export default function Home() {
             <div className="relative">
               <input
                 type="text"
-                placeholder="Enter room code..."
+                placeholder="Room code or link..."
                 value={roomCode}
-                onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
-                maxLength={6}
-                className="w-full bg-dark-900/80 border border-surface-glass-border text-white px-4 py-3.5 rounded-xl placeholder-gray-500 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/20 text-center text-lg font-mono tracking-[0.3em] uppercase"
+                onChange={(e) => setRoomCode(e.target.value)}
+                className="w-full bg-dark-900/80 border border-surface-glass-border text-white px-4 py-3.5 rounded-xl placeholder-gray-500 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/20 text-center text-base"
               />
             </div>
             {joinError && (

@@ -13,6 +13,10 @@ import {
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import fs from "fs";
 import path from "path";
+import dotenv from "dotenv";
+
+// Ensure env vars are loaded
+dotenv.config({ path: ".env.local" });
 
 // R2 Configuration from environment
 const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID || "";
@@ -22,6 +26,11 @@ const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY || "";
 const R2_ENDPOINT = process.env.R2_ENDPOINT || `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
 const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || "";
 
+// Log R2 config for debugging
+console.log(`[R2] Endpoint: ${R2_ENDPOINT}`);
+console.log(`[R2] Bucket: ${R2_BUCKET_NAME}`);
+console.log(`[R2] Public URL: ${R2_PUBLIC_URL}`);
+
 // Create S3-compatible client for R2
 export const r2Client = new S3Client({
   region: "auto",
@@ -30,6 +39,7 @@ export const r2Client = new S3Client({
     accessKeyId: R2_ACCESS_KEY_ID,
     secretAccessKey: R2_SECRET_ACCESS_KEY,
   },
+  forcePathStyle: true, // R2 requires path-style (not virtual-hosted)
 });
 
 /**

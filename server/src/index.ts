@@ -59,6 +59,7 @@ const TEMP_DIR = path.resolve(process.cwd(), "storage/temp");
 // ============================================================================
 
 export const rooms = new Map<string, RoomState>();
+export const roomCodes = new Map<string, string>(); // code → roomId mapping
 
 /**
  * Generate a short room code (6 characters)
@@ -96,6 +97,7 @@ export function createRoom(): { roomId: string; roomCode: string } {
   };
 
   rooms.set(roomId, newRoom);
+  roomCodes.set(roomCode, roomId); // Store code → ID mapping
   console.log(`[ROOM] Created new room: ${roomId} with code: ${roomCode}`);
   return { roomId, roomCode };
 }
@@ -205,9 +207,23 @@ app.post("/api/rooms", (_req, res) => {
     data: {
       roomId,
       roomCode,
-      joinUrl: `/room/${roomId}`,
+      joinUrl: `/room/${roomId}?code=${roomCode}`,
     },
   });
+});
+
+/**
+ * GET /api/rooms/code/:code - Lookup room by code
+ */
+app.get("/api/rooms/code/:code", (req, res) => {
+  const { code } = req.params;
+  const roomId = roomCodes.get(code.toUpperCase());
+
+  if (!roomId) {
+    return res.status(404).json({ success: false, error: "Room not found with this code" });
+  }
+
+  res.json({ success: true, data: { roomId, code } });
 });
 
 /**
