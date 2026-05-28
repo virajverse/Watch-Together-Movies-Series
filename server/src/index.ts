@@ -9,6 +9,8 @@ import { createServer } from "http";
 import { Server as SocketIOServer } from "socket.io";
 import dotenv from "dotenv";
 import { v4 as uuidv4 } from "uuid";
+import path from "path";
+import { existsSync, mkdirSync } from "fs";
 
 // Load environment variables
 dotenv.config({ path: ".env.local" });
@@ -18,7 +20,16 @@ import { setupRoomHandlers } from "./socket/rooms.ts";
 import { setupPlaybackHandlers } from "./socket/playback.ts";
 import { setupSyncHandlers, startHeartbeatServer } from "./socket/sync.ts";
 
-import type { RoomState, PlaybackState } from "../../shared/types.ts";
+// Import MVP2 modules
+import { createUploadRouter } from "./routes/upload.ts";
+import importRouter from "./routes/import.ts";
+import streamRouter from "./routes/stream.ts";
+import videosRouter from "./routes/videos.ts";
+import { localQueue } from "./workers/queue.ts";
+import { registerProcessingHandlers } from "./ffmpeg/processor.ts";
+import { startWatcher } from "./workers/watcher.ts";
+
+import type { RoomState } from "../../shared/types.ts";
 import { ROOM_CONFIG } from "../../shared/constants.ts";
 
 // ============================================================================
@@ -28,6 +39,20 @@ import { ROOM_CONFIG } from "../../shared/constants.ts";
 const PORT = process.env.PORT || 3001;
 const NODE_ENV = process.env.NODE_ENV || "development";
 const WS_ORIGIN = process.env.WS_ORIGIN || "http://localhost:3000";
+
+// ============================================================================
+// Ensure required directories exist
+// ============================================================================
+
+const IMPORT_DIR = path.resolve(process.cwd(), process.env.LOCAL_IMPORT_FOLDER || "./import");
+const TEMP_DIR = path.resolve(process.cwd(), "storage/temp");
+
+[IMPORT_DIR, TEMP_DIR].forEach(dir => {
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+    console.log(`[INIT] Created directory: ${dir}`);
+  }
+});
 
 // ============================================================================
 // Room Storage - In-Memory (MVP1)
@@ -139,6 +164,19 @@ io.on("connection", (socket) => {
 startHeartbeatServer(io, rooms);
 
 // ============================================================================
+// MVP2 - Initialize Worker Queue & FFmpeg Handlers
+// ============================================================================
+
+localQueue.init({ io });
+registerProcessingHandlers();
+
+// ============================================================================
+// MVP2 - Start Local Folder Watcher
+// ============================================================================
+
+startWatcher();
+
+// ============================================================================
 // REST API Routes
 // ============================================================================
 
@@ -159,7 +197,7 @@ app.get("/api/rooms/:id", (req, res) => {
 /**
  * POST /api/rooms - Create a new room
  */
-app.post("/api/rooms", (req, res) => {
+app.post("/api/rooms", (_req, res) => {
   const { roomId, roomCode } = createRoom();
 
   res.json({
@@ -175,14 +213,24 @@ app.post("/api/rooms", (req, res) => {
 /**
  * GET /api/health - Health check
  */
-app.get("/api/health", (req, res) => {
+app.get("/api/health", (_req, res) => {
   res.json({
     status: "ok",
     uptime: process.uptime(),
     rooms: rooms.size,
+    queue: localQueue.getStatus(),
     timestamp: new Date().toISOString(),
   });
 });
+
+// ============================================================================
+// MVP2 - Mount Upload, Import, Stream, and Video Routes
+// ============================================================================
+
+app.use("/api/upload", createUploadRouter(io));
+app.use("/api/import", importRouter);
+app.use("/api/stream", streamRouter);
+app.use("/api/videos", videosRouter);
 
 // ============================================================================
 // Periodic Cleanup
@@ -212,6 +260,8 @@ httpServer.listen(PORT, () => {
 ║ Port: ${PORT}
 ║ Environment: ${NODE_ENV}
 ║ Allowed Origins: ${WS_ORIGIN}
+║ MVP2: R2 Upload & HLS Streaming ✓
+║ Import Folder: ${IMPORT_DIR}
 ╚═════════════════════════════════════════╝
   `);
 });

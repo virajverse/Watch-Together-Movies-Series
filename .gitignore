@@ -60,6 +60,17 @@ storage/
 uploads/
 /tmp/watch-together/
 
+# Server storage (MVP2 uploads & streams)
+server/storage/uploads/
+server/storage/streams/
+server/storage/thumbnails/
+server/storage/temp/
+!server/storage/**/.gitkeep
+
+# Local import folder (video files)
+server/import/*
+!server/import/.gitkeep
+
 # Supabase local
 supabase/.temp/
 supabase/.branches/

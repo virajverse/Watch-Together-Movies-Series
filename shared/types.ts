@@ -122,3 +122,41 @@ export interface QueueJob {
   completedAt?: number;
   error?: string;
 }
+
+// ============================================================================
+// MVP2 - Video Upload & Streaming Types
+// ============================================================================
+
+export interface VideoFile {
+  id: string;
+  filename: string;
+  originalName: string;
+  fileSize: number;
+  mimeType: string;
+  duration?: number;
+  width?: number;
+  height?: number;
+  status: 'uploading' | 'processing' | 'ready' | 'failed';
+  thumbnailPath?: string;
+  streamPath?: string;
+  qualities?: string[];
+  uploadedBy?: string;
+  createdAt: number;
+  errorMessage?: string;
+}
+
+export interface UploadProgress {
+  videoId: string;
+  progress: number; // 0-100
+  stage: 'uploading' | 'processing' | 'complete' | 'error';
+  message?: string;
+}
+
+export interface ProcessingJob {
+  id: string;
+  videoId: string;
+  type: 'transcode' | 'thumbnail';
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  progress: number;
+  createdAt: number;
+}

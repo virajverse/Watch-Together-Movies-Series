@@ -14,7 +14,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL || "";
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || "";
 
 // Initialize Supabase client
-export const supabase: SupabaseClient =
+export const supabase: SupabaseClient | null =
   SUPABASE_URL && SUPABASE_ANON_KEY
     ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
     : null;
@@ -120,7 +120,7 @@ export const roomOperations = {
   async createRoom(
     roomId: string,
     hostId: string,
-    videoUrl: string = null
+    videoUrl: string | null = null
   ): Promise<Room | null> {
     if (!supabase) return null;
 

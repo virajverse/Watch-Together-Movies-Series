@@ -4,7 +4,7 @@
  */
 
 import { Socket, Server as SocketIOServer } from "socket.io";
-import type { RoomState, PlaybackState } from "../../../shared/types.ts";
+import type { RoomState } from "../../../shared/types.ts";
 import { SOCKET_EVENTS } from "../../../shared/constants.ts";
 
 export function setupPlaybackHandlers(

@@ -49,6 +49,12 @@ export const SOCKET_EVENTS = {
   // Errors
   ERROR: "error",
   ROOM_ERROR: "room-error",
+
+  // MVP2 - Upload & Processing
+  UPLOAD_PROGRESS: "upload-progress",
+  PROCESSING_PROGRESS: "processing-progress",
+  PROCESSING_COMPLETE: "processing-complete",
+  PROCESSING_FAILED: "processing-failed",
 };
 
 // Status Messages
@@ -92,4 +98,33 @@ export const ROOM_CONFIG = {
 
   // Room cleanup interval
   CLEANUP_INTERVAL: 60000, // 1 minute
+};
+
+// ============================================================================
+// MVP2 - Video Upload & HLS Configuration
+// ============================================================================
+
+export const VIDEO_UPLOAD_CONFIG = {
+  MAX_FILE_SIZE: 5 * 1024 * 1024 * 1024, // 5GB
+  ALLOWED_TYPES: ['video/mp4', 'video/webm', 'video/x-matroska', 'video/avi', 'video/quicktime'],
+  ALLOWED_EXTENSIONS: ['.mp4', '.mkv', '.webm', '.avi', '.mov'],
+};
+
+export const HLS_CONFIG = {
+  SEGMENT_DURATION: 6, // seconds per segment
+  QUALITIES: [
+    { name: '360p', width: 640, height: 360, bitrate: '800k' },
+    { name: '480p', width: 854, height: 480, bitrate: '1400k' },
+    { name: '720p', width: 1280, height: 720, bitrate: '2800k' },
+    { name: '1080p', width: 1920, height: 1080, bitrate: '5000k' },
+  ],
+};
+
+// ============================================================================
+// R2 Storage Configuration
+// ============================================================================
+
+export const R2_CONFIG = {
+  VIDEO_PREFIX: 'videos/',
+  PRESIGN_EXPIRY: 300, // 5 minutes
 };

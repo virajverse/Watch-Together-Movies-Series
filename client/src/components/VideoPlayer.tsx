@@ -8,9 +8,15 @@
  * - Time display
  * - Volume control
  * - Fullscreen toggle
+ * - HLS.js integration for .m3u8 streams
+ * - Quality selector for adaptive streaming
  */
 
-import React, { useRef, useEffect, useState } from "react";
+"use client";
+
+import React, { useRef, useEffect, useState, useCallback } from "react";
+import Hls from "hls.js";
+import { QualitySelector } from "./QualitySelector";
 
 interface VideoPlayerProps {
   videoUrl?: string;
@@ -36,11 +42,15 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
     ref
   ) => {
     const internalRef = useRef<HTMLVideoElement>(null);
+    const hlsRef = useRef<Hls | null>(null);
     const [isPlaying, setIsPlaying] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(0);
     const [volume, setVolume] = useState(1);
     const [isFullscreen, setIsFullscreen] = useState(false);
+    const [isHLS, setIsHLS] = useState(false);
+    const [qualities, setQualities] = useState<string[]>([]);
+    const [currentQuality, setCurrentQuality] = useState("auto");
     const containerRef = useRef<HTMLDivElement>(null);
 
     // Merge refs
@@ -51,6 +61,109 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
         ref.current = internalRef.current;
       }
     }, [ref]);
+
+    /**
+     * Initialize HLS.js or native video based on URL
+     */
+    useEffect(() => {
+      const video = internalRef.current;
+      if (!video || !videoUrl) return;
+
+      // Cleanup previous HLS instance
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+
+      const isM3U8 = videoUrl.endsWith(".m3u8");
+      setIsHLS(isM3U8);
+
+      if (isM3U8 && Hls.isSupported()) {
+        // Use HLS.js for .m3u8 streams
+        const hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: false,
+          startLevel: -1, // Auto quality
+          capLevelToPlayerSize: true,
+        });
+
+        hls.loadSource(videoUrl);
+        hls.attachMedia(video);
+
+        hls.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
+          // Extract available qualities
+          const levels = data.levels.map((level) => {
+            return `${level.height}p`;
+          });
+          setQualities([...new Set(levels)]);
+          console.log("[HLS] Available qualities:", levels);
+        });
+
+        hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => {
+          const level = hls.levels[data.level];
+          if (level) {
+            console.log(`[HLS] Quality switched to: ${level.height}p`);
+          }
+        });
+
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (data.fatal) {
+            console.error("[HLS] Fatal error:", data.type, data.details);
+            switch (data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                hls.startLoad();
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                hls.recoverMediaError();
+                break;
+              default:
+                hls.destroy();
+                break;
+            }
+          }
+        });
+
+        hlsRef.current = hls;
+      } else if (isM3U8 && video.canPlayType("application/vnd.apple.mpegurl")) {
+        // Native HLS support (Safari)
+        video.src = videoUrl;
+        setQualities([]);
+      } else {
+        // Regular video file (mp4, webm, etc.)
+        video.src = videoUrl;
+        setQualities([]);
+        setIsHLS(false);
+      }
+
+      return () => {
+        if (hlsRef.current) {
+          hlsRef.current.destroy();
+          hlsRef.current = null;
+        }
+      };
+    }, [videoUrl]);
+
+    /**
+     * Handle quality change
+     */
+    const handleQualityChange = useCallback((quality: string) => {
+      setCurrentQuality(quality);
+
+      if (!hlsRef.current) return;
+
+      if (quality === "auto") {
+        hlsRef.current.currentLevel = -1; // Auto
+      } else {
+        // Find the level index matching the quality
+        const targetHeight = parseInt(quality.replace("p", ""));
+        const levelIndex = hlsRef.current.levels.findIndex(
+          (level) => level.height === targetHeight
+        );
+        if (levelIndex !== -1) {
+          hlsRef.current.currentLevel = levelIndex;
+        }
+      }
+    }, []);
 
     /**
      * Sync with external playback state
@@ -116,6 +229,7 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
      * Format time to MM:SS
      */
     const formatTime = (seconds: number) => {
+      if (!isFinite(seconds)) return "00:00";
       const mins = Math.floor(seconds / 60);
       const secs = Math.floor(seconds % 60);
       return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
@@ -151,14 +265,13 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
     return (
       <div
         ref={containerRef}
-        className={`w-full bg-dark-900 rounded-lg overflow-hidden ${
-          isFullscreen ? "fixed inset-0" : ""
+        className={`relative w-full bg-dark-900 rounded-lg overflow-hidden ${
+          isFullscreen ? "fixed inset-0 z-50" : ""
         }`}
       >
         {/* Video Element */}
         <video
           ref={internalRef}
-          src={videoUrl}
           onPlay={handlePlay}
           onPause={handlePause}
           onSeeked={() => onSeek?.()}
@@ -183,7 +296,7 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
             >
               <div
                 className="bg-red-500 h-full rounded"
-                style={{ width: `${(currentTime / duration) * 100}%` }}
+                style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
               />
             </div>
           </div>
@@ -234,14 +347,26 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
               </span>
             </div>
 
-            {/* Right: Fullscreen */}
-            <button
-              onClick={toggleFullscreen}
-              className="text-white hover:bg-white/20 p-2 rounded transition"
-              title="Fullscreen"
-            >
-              {isFullscreen ? "🗗" : "⛶"}
-            </button>
+            {/* Right: Quality + Fullscreen */}
+            <div className="flex items-center gap-2">
+              {/* Quality Selector (only for HLS) */}
+              {isHLS && qualities.length > 0 && (
+                <QualitySelector
+                  qualities={qualities}
+                  currentQuality={currentQuality}
+                  onQualityChange={handleQualityChange}
+                />
+              )}
+
+              {/* Fullscreen */}
+              <button
+                onClick={toggleFullscreen}
+                className="text-white hover:bg-white/20 p-2 rounded transition"
+                title="Fullscreen"
+              >
+                {isFullscreen ? "🗗" : "⛶"}
+              </button>
+            </div>
           </div>
         </div>
       </div>
