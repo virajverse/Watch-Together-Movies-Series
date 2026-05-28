@@ -101,28 +101,6 @@ export default function RoomPage() {
   }, [userId, isConnected, joinRoom]);
 
   /**
-   * Setup video player controls
-   */
-  useEffect(() => {
-    const player = videoPlayerRef.current;
-    if (!player) return;
-
-    const handlePlay = () => broadcastPlay();
-    const handlePause = () => broadcastPause();
-    const handleSeeking = () => broadcastSeek();
-
-    player.addEventListener("play", handlePlay);
-    player.addEventListener("pause", handlePause);
-    player.addEventListener("seeking", handleSeeking);
-
-    return () => {
-      player.removeEventListener("play", handlePlay);
-      player.removeEventListener("pause", handlePause);
-      player.removeEventListener("seeking", handleSeeking);
-    };
-  }, [broadcastPlay, broadcastPause, broadcastSeek]);
-
-  /**
    * Handle video URL update
    */
   const handleUpdateVideoUrl = (e: React.FormEvent) => {
@@ -176,13 +154,16 @@ export default function RoomPage() {
 
         {/* Main Content */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Video Player - Left/Top */}
+          {/* Video Player */}
           <div className="lg:col-span-2 space-y-4">
             {/* Video Player */}
             <div className="relative">
               <VideoPlayer
                 ref={videoPlayerRef}
                 videoUrl={videoUrl}
+                onPlay={broadcastPlay}
+                onPause={broadcastPause}
+                onSeek={broadcastSeek}
               />
             </div>
 

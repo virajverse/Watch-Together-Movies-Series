@@ -161,6 +161,7 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
           src={videoUrl}
           onPlay={handlePlay}
           onPause={handlePause}
+          onSeeked={() => onSeek?.()}
           onTimeUpdate={handleTimeUpdate}
           onLoadedMetadata={handleLoadedMetadata}
           className="w-full h-full"
