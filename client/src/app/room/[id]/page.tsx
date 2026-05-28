@@ -2,7 +2,7 @@
 
 /**
  * Room Page [id]
- * Main watching experience - video player with sync
+ * Main watching experience - cinema-style layout
  *
  * Flow:
  * 1. Connect to socket
@@ -130,17 +130,18 @@ export default function RoomPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-dark-900 flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-white text-lg mb-4">Connecting to room...</p>
-          <div className="animate-spin text-4xl">⏳</div>
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center animate-fade-in">
+          <div className="w-16 h-16 mx-auto mb-6 rounded-full border-2 border-primary-500/30 border-t-primary-500 animate-spin" />
+          <p className="text-gray-300 text-lg font-medium">Connecting to room...</p>
+          <p className="text-gray-500 text-sm mt-2">Setting up sync</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-dark-900 p-4 md:p-6">
+    <div className="min-h-screen p-3 md:p-5 lg:p-6">
       {/* Autoplay Unlock Overlay - shows once */}
       {!playbackUnlocked && (
         <AutoplayUnlock
@@ -149,7 +150,7 @@ export default function RoomPage() {
         />
       )}
 
-      <div className="max-w-7xl mx-auto">
+      <div className="max-w-[1600px] mx-auto">
         {/* Room Header */}
         {room && (
           <RoomHeader
@@ -159,110 +160,148 @@ export default function RoomPage() {
           />
         )}
 
-        {/* Sync Status Banner */}
+        {/* Sync Status Banners */}
         {syncStatus === "playback-blocked" && (
-          <div className="bg-yellow-900/20 border border-yellow-600 text-yellow-300 p-3 rounded-lg mb-4 text-sm flex items-center gap-2">
-            ⚠️ Playback permission lost.
-            <button
-              onClick={() => setPlaybackUnlocked(false)}
-              className="underline font-semibold"
-            >
-              Re-enable sync
-            </button>
+          <div className="glass-card rounded-xl p-3 mb-4 border-amber-500/20 animate-slide-up">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-amber-500/10 flex items-center justify-center flex-shrink-0">
+                <svg className="w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                </svg>
+              </div>
+              <p className="text-amber-300 text-sm flex-1">Playback permission lost.</p>
+              <button
+                onClick={() => setPlaybackUnlocked(false)}
+                className="text-amber-400 hover:text-amber-300 text-sm font-semibold px-3 py-1 rounded-lg hover:bg-amber-500/10 transition-colors"
+              >
+                Re-enable
+              </button>
+            </div>
           </div>
         )}
 
-        {/* Sync Ready Indicator */}
         {playbackUnlocked && syncReady && (
-          <div className="bg-green-900/20 border border-green-700 text-green-300 p-2 rounded-lg mb-4 text-xs flex items-center gap-2">
-            🟢 Sync active — all playback events will sync automatically
+          <div className="glass-card rounded-xl p-2.5 mb-4 border-emerald-500/20 animate-fade-in">
+            <div className="flex items-center gap-2.5 px-2">
+              <div className="relative">
+                <div className="w-2 h-2 bg-emerald-400 rounded-full" />
+                <div className="absolute inset-0 w-2 h-2 bg-emerald-400 rounded-full animate-ping opacity-75" />
+              </div>
+              <p className="text-emerald-400 text-xs font-medium">Sync active — playback events sync in real-time</p>
+            </div>
           </div>
         )}
 
         {/* Error Display */}
         {roomError && (
-          <div className="bg-red-900/20 border border-red-600 text-red-300 p-4 rounded-lg mb-6">
-            {roomError}
+          <div className="glass-card rounded-xl p-4 mb-5 border-red-500/20 animate-slide-up">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-red-500/10 flex items-center justify-center flex-shrink-0">
+                <svg className="w-4 h-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                </svg>
+              </div>
+              <p className="text-red-300 text-sm">{roomError}</p>
+            </div>
           </div>
         )}
 
-        {/* Main Content */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Video Player */}
-          <div className="lg:col-span-2 space-y-4">
-            <div className="relative">
-              <VideoPlayer
-                ref={videoPlayerRef}
-                videoUrl={videoUrl}
-                onPlay={broadcastPlay}
-                onPause={broadcastPause}
-                onSeek={broadcastSeek}
-              />
-            </div>
+        {/* Main Content - Cinema Layout */}
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5">
+          {/* Video Player Area */}
+          <div className="space-y-4">
+            <VideoPlayer
+              ref={videoPlayerRef}
+              videoUrl={videoUrl}
+              onPlay={broadcastPlay}
+              onPause={broadcastPause}
+              onSeek={broadcastSeek}
+            />
 
-            {/* Video URL Input */}
-            <div>
+            {/* Video URL Controls */}
+            <div className="flex items-center gap-3">
               {!showUrlInput ? (
                 <button
                   onClick={() => setShowUrlInput(true)}
-                  className="text-blue-400 hover:text-blue-300 text-sm font-semibold"
+                  className="flex items-center gap-2 text-gray-400 hover:text-primary-400 text-sm font-medium transition-colors px-3 py-2 rounded-xl hover:bg-surface-glass-hover"
                 >
-                  + Add/Change Video URL
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m9.86-2.556a4.5 4.5 0 00-1.242-7.244l-4.5-4.5a4.5 4.5 0 00-6.364 6.364L4.343 8.69" />
+                  </svg>
+                  Change Video
                 </button>
               ) : (
-                <form onSubmit={handleUpdateVideoUrl} className="flex gap-2">
+                <form onSubmit={handleUpdateVideoUrl} className="flex gap-2 flex-1 animate-slide-up">
                   <input
                     type="url"
                     value={urlInput}
                     onChange={(e) => setUrlInput(e.target.value)}
                     placeholder="Enter video URL (MP4, WebM, M3U8)"
-                    className="flex-1 bg-dark-800 border border-dark-700 text-white px-3 py-2 rounded text-sm"
+                    className="flex-1 bg-dark-900/80 border border-surface-glass-border text-white px-4 py-2.5 rounded-xl text-sm placeholder-gray-500 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/20"
                   />
                   <button
                     type="submit"
-                    className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-semibold"
+                    className="px-4 py-2.5 bg-primary-600 hover:bg-primary-500 text-white rounded-xl text-sm font-semibold transition-colors"
                   >
                     Load
                   </button>
                   <button
                     type="button"
                     onClick={() => setShowUrlInput(false)}
-                    className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded text-sm"
+                    className="px-3 py-2.5 text-gray-400 hover:text-white hover:bg-surface-glass-hover rounded-xl text-sm transition-colors"
                   >
-                    Cancel
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
                   </button>
                 </form>
               )}
-            </div>
-
-            {/* Video Info */}
-            <div className="bg-dark-800 border border-dark-700 rounded-lg p-4">
-              <h3 className="text-white font-semibold mb-2">📹 Video Info</h3>
-              <p className="text-gray-400 text-sm break-all">{videoUrl}</p>
             </div>
           </div>
 
           {/* Sidebar */}
           <div className="space-y-4">
+            {/* Users */}
             {room && (
               <UsersConnected users={users} currentUserId={userId} />
             )}
 
+            {/* Leave Room - subtle */}
             <button
               onClick={handleLeaveRoom}
-              className="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-lg transition"
+              className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-medium text-gray-400 hover:text-red-400 bg-surface-glass hover:bg-red-500/10 border border-surface-glass-border hover:border-red-500/20 transition-all duration-200"
             >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
+              </svg>
               Leave Room
             </button>
 
-            <div className="bg-dark-800 border border-dark-700 rounded-lg p-4">
-              <h3 className="text-white font-semibold mb-2">ℹ️ How it works</h3>
-              <ul className="text-gray-400 text-sm space-y-1">
-                <li>• Tap "Enable Sync" once to allow playback</li>
-                <li>• All play/pause/seek actions sync in real-time</li>
-                <li>• Video auto-syncs if drift detected (&gt;500ms)</li>
-                <li>• Share room link with friends to join</li>
-                <li>• First user becomes host</li>
+            {/* How it works */}
+            <div className="glass-card rounded-2xl p-5">
+              <h3 className="text-white font-semibold text-sm mb-3 flex items-center gap-2">
+                <svg className="w-4 h-4 text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z" />
+                </svg>
+                How it works
+              </h3>
+              <ul className="text-gray-400 text-xs space-y-2 leading-relaxed">
+                <li className="flex items-start gap-2">
+                  <span className="text-primary-400 mt-0.5">•</span>
+                  Tap "Start Watching" once to enable sync
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-primary-400 mt-0.5">•</span>
+                  All play/pause/seek actions sync in real-time
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-primary-400 mt-0.5">•</span>
+                  Auto-syncs if drift detected (&gt;500ms)
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-primary-400 mt-0.5">•</span>
+                  Share room link with friends to join
+                </li>
               </ul>
             </div>
           </div>
