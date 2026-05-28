@@ -68,6 +68,34 @@ export function setupSyncHandlers(
     // Send full room state for consistency
     socket.emit(SOCKET_EVENTS.ROOM_STATE_UPDATED, room);
   });
+
+  /**
+   * Handler: playback-ready
+   * Client has unlocked autoplay and is ready for sync
+   */
+  socket.on("playback-ready", (data: { roomId: string; userId: string }) => {
+    const { roomId, userId } = data;
+    console.log(`[SYNC] User ${userId.substring(0, 8)} playback ready in room ${roomId.substring(0, 8)}`);
+
+    const room = rooms.get(roomId);
+    if (!room) return;
+
+    // Send current room state so new user syncs immediately
+    socket.emit(SOCKET_EVENTS.ROOM_STATE_UPDATED, room);
+
+    // If video is currently playing, send force sync
+    if (room.playbackState.isPlaying) {
+      socket.emit(SOCKET_EVENTS.FORCE_SYNC, room.playbackState);
+    }
+  });
+
+  /**
+   * Handler: playback-blocked
+   * Client's autoplay was blocked
+   */
+  socket.on("playback-blocked", (data: { roomId: string; userId: string }) => {
+    console.log(`[SYNC] User ${data.userId.substring(0, 8)} playback blocked in room ${data.roomId.substring(0, 8)}`);
+  });
 }
 
 /**

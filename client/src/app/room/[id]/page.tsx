@@ -7,9 +7,9 @@
  * Flow:
  * 1. Connect to socket
  * 2. Get/create userId from session
- * 3. Join room via socket
- * 4. Setup video sync listeners
- * 5. Broadcast play/pause/seek events
+ * 3. Show autoplay unlock overlay (one-time)
+ * 4. Join room via socket
+ * 5. After unlock, all sync events work automatically
  */
 
 import React, { useEffect, useRef, useState } from "react";
@@ -21,14 +21,8 @@ import { useVideoSync } from "../../../hooks/useVideoSync";
 import { VideoPlayer } from "../../../components/VideoPlayer";
 import { RoomHeader } from "../../../components/RoomHeader";
 import { UsersConnected } from "../../../components/UsersConnected";
+import { AutoplayUnlock } from "../../../components/AutoplayUnlock";
 import { SOCKET_EVENTS } from "../../../../shared/constants";
-
-interface VideoPlayerRefHandle {
-  play: () => Promise<void>;
-  pause: () => Promise<void>;
-  currentTime: number;
-  duration: number;
-}
 
 export default function RoomPage() {
   const params = useParams();
@@ -49,6 +43,7 @@ export default function RoomPage() {
   const [urlInput, setUrlInput] = useState<string>(videoUrl);
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+  const [playbackUnlocked, setPlaybackUnlocked] = useState(false);
 
   // Custom hooks
   const { room, users, error: roomError, isLoading, joinRoom } = useRoom({
@@ -56,17 +51,23 @@ export default function RoomPage() {
     userId: userId || "",
   });
 
-  const { broadcastPlay, broadcastPause, broadcastSeek } = useVideoSync({
+  const {
+    broadcastPlay,
+    broadcastPause,
+    broadcastSeek,
+    markPlaybackReady,
+    syncReady,
+    syncStatus,
+  } = useVideoSync({
     roomId,
     userId: userId || "",
-    playerRef: videoPlayerRef as any,
+    playerRef: videoPlayerRef,
   });
 
   /**
    * Initialize on mount
    */
   useEffect(() => {
-    // Get or create user ID
     let stored = sessionStorage.getItem("userId");
     if (!stored) {
       stored = uuidv4();
@@ -74,7 +75,6 @@ export default function RoomPage() {
     }
     setUserId(stored);
 
-    // Connect socket if not already connected
     const initSocket = async () => {
       try {
         if (!socketClient.getIsConnected()) {
@@ -101,6 +101,15 @@ export default function RoomPage() {
   }, [userId, isConnected, joinRoom]);
 
   /**
+   * Handle autoplay unlock success
+   */
+  const handlePlaybackUnlocked = () => {
+    setPlaybackUnlocked(true);
+    markPlaybackReady();
+    console.log("[ROOM] ✅ Playback unlocked - sync is now active");
+  };
+
+  /**
    * Handle video URL update
    */
   const handleUpdateVideoUrl = (e: React.FormEvent) => {
@@ -115,10 +124,7 @@ export default function RoomPage() {
    * Handle leave room
    */
   const handleLeaveRoom = () => {
-    socketClient.emit(SOCKET_EVENTS.LEAVE_ROOM, {
-      roomId,
-      userId,
-    });
+    socketClient.emit(SOCKET_EVENTS.LEAVE_ROOM, { roomId, userId });
     router.push("/");
   };
 
@@ -135,6 +141,14 @@ export default function RoomPage() {
 
   return (
     <div className="min-h-screen bg-dark-900 p-4 md:p-6">
+      {/* Autoplay Unlock Overlay - shows once */}
+      {!playbackUnlocked && (
+        <AutoplayUnlock
+          videoRef={videoPlayerRef}
+          onUnlocked={handlePlaybackUnlocked}
+        />
+      )}
+
       <div className="max-w-7xl mx-auto">
         {/* Room Header */}
         {room && (
@@ -143,6 +157,26 @@ export default function RoomPage() {
             roomCode={roomCode}
             userCount={users.length}
           />
+        )}
+
+        {/* Sync Status Banner */}
+        {syncStatus === "playback-blocked" && (
+          <div className="bg-yellow-900/20 border border-yellow-600 text-yellow-300 p-3 rounded-lg mb-4 text-sm flex items-center gap-2">
+            ⚠️ Playback permission lost.
+            <button
+              onClick={() => setPlaybackUnlocked(false)}
+              className="underline font-semibold"
+            >
+              Re-enable sync
+            </button>
+          </div>
+        )}
+
+        {/* Sync Ready Indicator */}
+        {playbackUnlocked && syncReady && (
+          <div className="bg-green-900/20 border border-green-700 text-green-300 p-2 rounded-lg mb-4 text-xs flex items-center gap-2">
+            🟢 Sync active — all playback events will sync automatically
+          </div>
         )}
 
         {/* Error Display */}
@@ -156,7 +190,6 @@ export default function RoomPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Video Player */}
           <div className="lg:col-span-2 space-y-4">
-            {/* Video Player */}
             <div className="relative">
               <VideoPlayer
                 ref={videoPlayerRef}
@@ -209,17 +242,12 @@ export default function RoomPage() {
             </div>
           </div>
 
-          {/* Sidebar - Right */}
+          {/* Sidebar */}
           <div className="space-y-4">
-            {/* Connected Users */}
             {room && (
-              <UsersConnected
-                users={users}
-                currentUserId={userId}
-              />
+              <UsersConnected users={users} currentUserId={userId} />
             )}
 
-            {/* Leave Room Button */}
             <button
               onClick={handleLeaveRoom}
               className="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-lg transition"
@@ -227,13 +255,13 @@ export default function RoomPage() {
               Leave Room
             </button>
 
-            {/* Help */}
             <div className="bg-dark-800 border border-dark-700 rounded-lg p-4">
               <h3 className="text-white font-semibold mb-2">ℹ️ How it works</h3>
               <ul className="text-gray-400 text-sm space-y-1">
+                <li>• Tap "Enable Sync" once to allow playback</li>
                 <li>• All play/pause/seek actions sync in real-time</li>
                 <li>• Video auto-syncs if drift detected (&gt;500ms)</li>
-                <li>• Share room code with friends to join</li>
+                <li>• Share room link with friends to join</li>
                 <li>• First user becomes host</li>
               </ul>
             </div>
