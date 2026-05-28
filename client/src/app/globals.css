@@ -327,3 +327,8 @@ input[type="range"]::-moz-range-thumb {
     opacity: 1;
   }
 }
+
+/* Safe area bottom padding */
+.safe-bottom {
+  padding-bottom: max(8px, env(safe-area-inset-bottom));
+}
