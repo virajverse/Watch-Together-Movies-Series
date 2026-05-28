@@ -3,13 +3,11 @@
  * Manages real-time video synchronization
  *
  * Anti-loop protection:
- * - Ignore events from own socket
- * - Track if action was triggered remotely (skip re-broadcast)
- * - Debounce seek events
- * - Throttle updates
+ * - isRemoteActionRef prevents re-broadcasting received events
+ * - Debounce seek events (300ms)
  */
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import { socketClient } from "../lib/socket";
 import { PlaybackState } from "../../shared/types";
 import { SYNC_CONFIG, SOCKET_EVENTS } from "../../shared/constants";
@@ -21,40 +19,64 @@ interface UseVideoSyncOptions {
 }
 
 export function useVideoSync({ roomId, userId, playerRef }: UseVideoSyncOptions) {
-  const isRemoteActionRef = useRef(false); // Prevents echo/loop
-  const lastSeekTimeRef = useRef(0); // Debounce seeks
+  const isRemoteActionRef = useRef(false);
+  const lastSeekTimeRef = useRef(0);
   const heartbeatIntervalRef = useRef<NodeJS.Timeout>();
+  const [syncStatus, setSyncStatus] = useState<string>("");
 
   const getCurrentTime = useCallback(() => {
     return playerRef.current?.currentTime ?? 0;
   }, [playerRef]);
 
   /**
-   * Perform sync with room state
+   * Safe play - handles autoplay restrictions
+   */
+  const safePlay = useCallback(async (player: HTMLVideoElement) => {
+    try {
+      await player.play();
+    } catch (err: any) {
+      if (err.name === "NotAllowedError") {
+        console.warn("[VIDEO SYNC] Autoplay blocked - user interaction needed");
+        setSyncStatus("Click video to enable sync");
+        // Mute and try again (muted autoplay is usually allowed)
+        player.muted = true;
+        try {
+          await player.play();
+          // Unmute after a short delay
+          setTimeout(() => { player.muted = false; }, 100);
+        } catch {
+          console.error("[VIDEO SYNC] Even muted play failed");
+        }
+      } else {
+        console.error("[VIDEO SYNC] Play failed:", err);
+      }
+    }
+  }, []);
+
+  /**
+   * Sync with room state (force sync)
    */
   const syncWithRoom = useCallback((playbackState: PlaybackState) => {
     const currentTime = getCurrentTime();
     const drift = Math.abs(currentTime - playbackState.currentTime);
 
-    if (drift > SYNC_CONFIG.FORCE_SYNC_THRESHOLD / 1000) {
-      console.log(
-        `[VIDEO SYNC] Syncing: drift ${drift.toFixed(2)}s exceeds threshold`
-      );
+    if (drift > 0.5) { // 500ms = 0.5 seconds
+      console.log(`[VIDEO SYNC] Force sync: drift ${drift.toFixed(2)}s`);
 
       if (playerRef.current) {
         isRemoteActionRef.current = true;
         playerRef.current.currentTime = playbackState.currentTime;
 
         if (playbackState.isPlaying && playerRef.current.paused) {
-          playerRef.current.play().catch(console.error);
+          safePlay(playerRef.current);
         } else if (!playbackState.isPlaying && !playerRef.current.paused) {
           playerRef.current.pause();
         }
 
-        setTimeout(() => { isRemoteActionRef.current = false; }, 300);
+        setTimeout(() => { isRemoteActionRef.current = false; }, 500);
       }
     }
-  }, [getCurrentTime, playerRef]);
+  }, [getCurrentTime, playerRef, safePlay]);
 
   /**
    * Handle play event from other users
@@ -63,16 +85,16 @@ export function useVideoSync({ roomId, userId, playerRef }: UseVideoSyncOptions)
     (data: { userId: string; timestamp: number; timestamp_ms: number }) => {
       if (data.userId === userId) return;
 
-      console.log(`[VIDEO SYNC] Play from ${data.userId.substring(0, 8)} at ${data.timestamp}s`);
+      console.log(`[VIDEO SYNC] ▶ Play from ${data.userId.substring(0, 6)} at ${data.timestamp.toFixed(1)}s`);
 
       if (playerRef.current) {
         isRemoteActionRef.current = true;
         playerRef.current.currentTime = data.timestamp;
-        playerRef.current.play().catch(console.error);
-        setTimeout(() => { isRemoteActionRef.current = false; }, 300);
+        safePlay(playerRef.current);
+        setTimeout(() => { isRemoteActionRef.current = false; }, 500);
       }
     },
-    [userId, playerRef]
+    [userId, playerRef, safePlay]
   );
 
   /**
@@ -82,13 +104,13 @@ export function useVideoSync({ roomId, userId, playerRef }: UseVideoSyncOptions)
     (data: { userId: string; timestamp: number; timestamp_ms: number }) => {
       if (data.userId === userId) return;
 
-      console.log(`[VIDEO SYNC] Pause from ${data.userId.substring(0, 8)} at ${data.timestamp}s`);
+      console.log(`[VIDEO SYNC] ⏸ Pause from ${data.userId.substring(0, 6)} at ${data.timestamp.toFixed(1)}s`);
 
       if (playerRef.current) {
         isRemoteActionRef.current = true;
         playerRef.current.currentTime = data.timestamp;
         playerRef.current.pause();
-        setTimeout(() => { isRemoteActionRef.current = false; }, 300);
+        setTimeout(() => { isRemoteActionRef.current = false; }, 500);
       }
     },
     [userId, playerRef]
@@ -101,12 +123,12 @@ export function useVideoSync({ roomId, userId, playerRef }: UseVideoSyncOptions)
     (data: { userId: string; timestamp: number; timestamp_ms: number }) => {
       if (data.userId === userId) return;
 
-      console.log(`[VIDEO SYNC] Seek from ${data.userId.substring(0, 8)} to ${data.timestamp}s`);
+      console.log(`[VIDEO SYNC] ⏩ Seek from ${data.userId.substring(0, 6)} to ${data.timestamp.toFixed(1)}s`);
 
       if (playerRef.current) {
         isRemoteActionRef.current = true;
         playerRef.current.currentTime = data.timestamp;
-        setTimeout(() => { isRemoteActionRef.current = false; }, 300);
+        setTimeout(() => { isRemoteActionRef.current = false; }, 500);
       }
     },
     [userId, playerRef]
@@ -117,7 +139,7 @@ export function useVideoSync({ roomId, userId, playerRef }: UseVideoSyncOptions)
    */
   const handleForceSync = useCallback(
     (playbackState: PlaybackState) => {
-      console.log("[VIDEO SYNC] Force sync triggered by server");
+      console.log("[VIDEO SYNC] 🔄 Force sync from server");
       syncWithRoom(playbackState);
     },
     [syncWithRoom]
@@ -127,8 +149,9 @@ export function useVideoSync({ roomId, userId, playerRef }: UseVideoSyncOptions)
    * Broadcast play - with anti-loop check
    */
   const broadcastPlay = useCallback(() => {
-    if (isRemoteActionRef.current) return; // Skip if triggered by remote event
+    if (isRemoteActionRef.current) return;
     const currentTime = getCurrentTime();
+    console.log(`[VIDEO SYNC] Broadcasting play at ${currentTime.toFixed(1)}s`);
     socketClient.emit("play", { roomId, userId, timestamp: currentTime });
   }, [roomId, userId, getCurrentTime]);
 
@@ -138,6 +161,7 @@ export function useVideoSync({ roomId, userId, playerRef }: UseVideoSyncOptions)
   const broadcastPause = useCallback(() => {
     if (isRemoteActionRef.current) return;
     const currentTime = getCurrentTime();
+    console.log(`[VIDEO SYNC] Broadcasting pause at ${currentTime.toFixed(1)}s`);
     socketClient.emit("pause", { roomId, userId, timestamp: currentTime });
   }, [roomId, userId, getCurrentTime]);
 
@@ -148,10 +172,11 @@ export function useVideoSync({ roomId, userId, playerRef }: UseVideoSyncOptions)
     if (isRemoteActionRef.current) return;
 
     const now = Date.now();
-    if (now - lastSeekTimeRef.current < 300) return; // Debounce 300ms
+    if (now - lastSeekTimeRef.current < 300) return;
     lastSeekTimeRef.current = now;
 
     const currentTime = getCurrentTime();
+    console.log(`[VIDEO SYNC] Broadcasting seek to ${currentTime.toFixed(1)}s`);
     socketClient.emit("seek", { roomId, userId, timestamp: currentTime });
   }, [roomId, userId, getCurrentTime]);
 
@@ -194,5 +219,6 @@ export function useVideoSync({ roomId, userId, playerRef }: UseVideoSyncOptions)
     broadcastPause,
     broadcastSeek,
     sendHeartbeat,
+    syncStatus,
   };
 }

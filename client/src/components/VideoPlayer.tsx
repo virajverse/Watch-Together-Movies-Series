@@ -164,6 +164,8 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
           onTimeUpdate={handleTimeUpdate}
           onLoadedMetadata={handleLoadedMetadata}
           className="w-full h-full"
+          playsInline
+          preload="auto"
         />
 
         {/* Controls Overlay */}
