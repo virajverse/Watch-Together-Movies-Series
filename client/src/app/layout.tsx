@@ -5,11 +5,6 @@ export const metadata: Metadata = {
   title: "Watch Together - Stream in Sync",
   description: "Watch movies and videos together in perfect real-time sync with friends",
   manifest: "/manifest.json",
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: "black-translucent",
-    title: "Watch Together",
-  },
 };
 
 export const viewport: Viewport = {

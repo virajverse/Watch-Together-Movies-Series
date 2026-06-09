@@ -3,6 +3,8 @@
 /**
  * Media Controls Component
  * Voice/camera controls - supports inline (desktop) and bottom-bar (mobile) layouts
+ *
+ * Host-authority: if NOT host, play/pause button is replaced with info text.
  */
 
 import React from "react";
@@ -21,7 +23,8 @@ interface MediaControlsProps {
   onLeaveRoom?: () => void;
   permissionError?: string | null;
   layout?: "inline" | "bottom-bar";
-  videoRef?: React.RefObject<HTMLVideoElement | null>;
+  isVideoPlaying?: boolean;
+  isHost?: boolean;
 }
 
 export const MediaControls: React.FC<MediaControlsProps> = ({
@@ -38,94 +41,122 @@ export const MediaControls: React.FC<MediaControlsProps> = ({
   onLeaveRoom,
   permissionError,
   layout = "inline",
-  videoRef,
+  isVideoPlaying,
+  isHost = true,
 }) => {
   // ===== BOTTOM BAR LAYOUT (Mobile) =====
   if (layout === "bottom-bar") {
     return (
-      <div className="fixed bottom-0 left-0 right-0 z-50 bg-dark-900/95 backdrop-blur-xl border-t border-surface-glass-border safe-bottom">
-        <div className="flex items-center justify-evenly px-2 py-2">
-          {/* Pause/Play */}
-          <button
-            onClick={onTogglePlayPause}
-            className="flex flex-col items-center gap-0.5"
-          >
-            <div className="w-10 h-10 rounded-full bg-dark-700 hover:bg-dark-600 flex items-center justify-center transition-colors active:scale-90">
-              <svg className="w-4.5 h-4.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25v13.5m-7.5-13.5v13.5" />
-              </svg>
+      <div className="flex-shrink-0 bg-dark-900/95 backdrop-blur-xl border-t border-surface-glass-border" style={{ paddingBottom: "max(8px, env(safe-area-inset-bottom))" }}>
+        <div className="flex items-center justify-around px-4 py-2">
+          {/* Pause/Play — only for host */}
+          {isHost ? (
+            <button
+              onClick={onTogglePlayPause}
+              className="flex flex-col items-center gap-1 py-1"
+            >
+              <div className="w-11 h-11 rounded-full bg-dark-700 hover:bg-dark-600 flex items-center justify-center transition-colors">
+                {isVideoPlaying ? (
+                  <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25v13.5m-7.5-13.5v13.5" />
+                  </svg>
+                ) : (
+                  <svg className="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M8 5v14l11-7z" />
+                  </svg>
+                )}
+              </div>
+              <span className="text-[10px] text-gray-400 font-medium">{isVideoPlaying ? "Pause" : "Play"}</span>
+            </button>
+          ) : (
+            <div className="flex flex-col items-center gap-1 py-1">
+              <div className="w-11 h-11 rounded-full bg-dark-800/60 flex items-center justify-center">
+                <svg className="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                </svg>
+              </div>
+              <span className="text-[10px] text-gray-500 font-medium">Host only</span>
             </div>
-            <span className="text-[9px] text-gray-400">Pause</span>
-          </button>
+          )}
 
           {/* Sync */}
           <button
             onClick={onForceSync}
-            className="flex flex-col items-center gap-0.5"
+            className="flex flex-col items-center gap-1 py-1"
           >
-            <div className="w-10 h-10 rounded-full bg-dark-700 hover:bg-dark-600 flex items-center justify-center transition-colors active:scale-90">
-              <svg className="w-4.5 h-4.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <div className="w-11 h-11 rounded-full bg-dark-700 hover:bg-dark-600 flex items-center justify-center transition-colors">
+              <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
               </svg>
             </div>
-            <span className="text-[9px] text-gray-400">Sync</span>
+            <span className="text-[10px] text-gray-400 font-medium">Sync</span>
           </button>
 
-          {/* Voice - LARGER (primary action) */}
+          {/* Voice */}
           <button
             onClick={isInVoice ? onToggleMic : onJoinVoice}
-            className="flex flex-col items-center gap-0.5"
+            className="flex flex-col items-center gap-1 py-1"
           >
-            <div className={`relative w-12 h-12 rounded-full flex items-center justify-center transition-all active:scale-90 ${
+            <div className={`w-11 h-11 rounded-full flex items-center justify-center transition-all ${
               isInVoice
                 ? isMicOn
-                  ? "bg-emerald-500 shadow-glow-green"
-                  : "bg-red-500"
-                : "bg-primary-600 shadow-glow-sm"
+                  ? "bg-emerald-500/20 border border-emerald-500/40 shadow-glow-green"
+                  : "bg-red-500/20 border border-red-500/40"
+                : "bg-dark-700 hover:bg-dark-600"
             }`}>
               {isSpeaking && isInVoice && (
-                <div className="absolute inset-0 rounded-full border-2 border-white/30 animate-ping" />
+                <div className="absolute inset-0 rounded-full border-2 border-emerald-400 animate-pulse" />
               )}
-              <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className={`w-5 h-5 ${isInVoice ? (isMicOn ? "text-emerald-400" : "text-red-400") : "text-white"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
               </svg>
             </div>
-            <span className={`text-[9px] font-medium ${isInVoice ? "text-emerald-400" : "text-primary-400"}`}>Voice</span>
+            <span className={`text-[10px] font-medium ${isInVoice ? "text-emerald-400" : "text-gray-400"}`}>
+              Voice
+            </span>
           </button>
 
           {/* Camera */}
           <button
             onClick={onToggleCamera}
-            className="flex flex-col items-center gap-0.5"
+            className="flex flex-col items-center gap-1 py-1"
           >
-            <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all active:scale-90 ${
-              isCameraOn ? "bg-blue-600" : "bg-dark-700 hover:bg-dark-600"
+            <div className={`w-11 h-11 rounded-full flex items-center justify-center transition-all ${
+              isCameraOn
+                ? "bg-blue-500/20 border border-blue-500/40"
+                : "bg-dark-700 hover:bg-dark-600"
             }`}>
-              <svg className={`w-4.5 h-4.5 ${isCameraOn ? "text-white" : "text-gray-400"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
-              </svg>
+              {isCameraOn ? (
+                <svg className="w-5 h-5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
+                </svg>
+              ) : (
+                <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M12 18.75H4.5a2.25 2.25 0 01-2.25-2.25V9m12.841 9.091L16.5 19.5m-1.409-1.409c.546-.546.146-1.479-.616-1.479H4.5a2.25 2.25 0 01-2.25-2.25V7.5m16.06.702a.75.75 0 00-1.28-.53l-4.72 4.72M3 3l18 18" />
+                </svg>
+              )}
             </div>
-            <span className={`text-[9px] ${isCameraOn ? "text-blue-400" : "text-gray-400"}`}>Camera</span>
+            <span className={`text-[10px] font-medium ${isCameraOn ? "text-blue-400" : "text-gray-400"}`}>Camera</span>
           </button>
 
           {/* Leave */}
           <button
             onClick={onLeaveRoom}
-            className="flex flex-col items-center gap-0.5"
+            className="flex flex-col items-center gap-1 py-1"
           >
-            <div className="w-10 h-10 rounded-full bg-red-500/20 hover:bg-red-500/30 flex items-center justify-center transition-colors active:scale-90">
-              <svg className="w-4.5 h-4.5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <div className="w-11 h-11 rounded-full bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 flex items-center justify-center transition-colors">
+              <svg className="w-5 h-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
               </svg>
             </div>
-            <span className="text-[9px] text-red-400">Leave</span>
+            <span className="text-[10px] text-red-400 font-medium">Leave</span>
           </button>
         </div>
 
         {/* Permission Error */}
         {permissionError && (
-          <div className="mx-3 mb-1 px-3 py-1.5 rounded-lg bg-red-500/10 border border-red-500/20">
-            <p className="text-red-400 text-[10px] text-center">{permissionError}</p>
+          <div className="mx-4 mb-2 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20">
+            <p className="text-red-400 text-xs text-center">{permissionError}</p>
           </div>
         )}
       </div>

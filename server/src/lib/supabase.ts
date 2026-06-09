@@ -509,7 +509,7 @@ export const roomSessionOperations = {
             last_updated_at: new Date().toISOString(),
             updated_by: updatedBy,
           },
-          { onConflict: ["room_id"] }
+          { onConflict: "room_id" }
         )
         .select()
         .single();

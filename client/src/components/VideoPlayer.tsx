@@ -1,6 +1,8 @@
 /**
  * Video Player Component
  * Premium player with hover controls, sleek progress bar, HLS support
+ *
+ * Host-authority: if NOT host, onPlay/onPause/onSeek callbacks are suppressed.
  */
 
 "use client";
@@ -15,8 +17,7 @@ interface VideoPlayerProps {
   onPause?: () => void;
   onSeek?: () => void;
   onTimeUpdate?: (currentTime: number) => void;
-  isPlaying?: boolean;
-  currentTime?: number;
+  isHost?: boolean;
 }
 
 export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
@@ -27,8 +28,7 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
       onPause,
       onSeek,
       onTimeUpdate,
-      isPlaying: externalIsPlaying,
-      currentTime: externalCurrentTime,
+      isHost = true,
     },
     ref
   ) => {
@@ -180,34 +180,31 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
       }
     }, []);
 
-    /**
-     * Sync with external playback state
-     */
-    useEffect(() => {
-      if (externalCurrentTime !== undefined && internalRef.current) {
-        const diff = Math.abs(internalRef.current.currentTime - externalCurrentTime);
-        if (diff > 0.1) {
-          internalRef.current.currentTime = externalCurrentTime;
-        }
-      }
-    }, [externalCurrentTime]);
-
     const handlePlay = () => {
       setIsPlaying(true);
-      onPlay?.();
+      // Only broadcast if host
+      if (isHost) {
+        onPlay?.();
+      }
     };
 
     const handlePause = () => {
       setIsPlaying(false);
       setShowControls(true);
-      onPause?.();
+      // Only broadcast if host
+      if (isHost) {
+        onPause?.();
+      }
     };
 
     const handleSeek = (time: number) => {
       if (internalRef.current) {
         internalRef.current.currentTime = time;
         setCurrentTime(time);
-        onSeek?.();
+        // Only broadcast if host
+        if (isHost) {
+          onSeek?.();
+        }
       }
     };
 
@@ -246,12 +243,22 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
           } else if ((containerRef.current as any).webkitRequestFullscreen) {
             await (containerRef.current as any).webkitRequestFullscreen();
           }
+          try {
+            await (screen.orientation as any)?.lock?.("landscape");
+          } catch {
+            // Orientation lock not supported or denied
+          }
           setIsFullscreen(true);
         } else {
           if (document.exitFullscreen) {
             await document.exitFullscreen();
           } else if ((document as any).webkitExitFullscreen) {
             await (document as any).webkitExitFullscreen();
+          }
+          try {
+            (screen.orientation as any)?.unlock?.();
+          } catch {
+            // Ignore
           }
           setIsFullscreen(false);
         }
@@ -275,8 +282,8 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
         ref={containerRef}
         onMouseMove={handleMouseMove}
         onMouseLeave={handleMouseLeave}
-        className={`relative w-full bg-black rounded-2xl overflow-hidden group ${
-          isFullscreen ? "fixed inset-0 z-50 rounded-none" : "aspect-video"
+        className={`relative w-full bg-black overflow-hidden group ${
+          isFullscreen ? "fixed inset-0 z-[9999] rounded-none" : "aspect-video rounded-2xl"
         }`}
       >
         {/* Video Element */}
@@ -284,12 +291,12 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
           ref={internalRef}
           onPlay={handlePlay}
           onPause={handlePause}
-          onSeeked={() => onSeek?.()}
+          onSeeked={() => { if (isHost) onSeek?.(); }}
           onTimeUpdate={handleTimeUpdate}
           onLoadedMetadata={handleLoadedMetadata}
           onWaiting={() => setIsBuffering(true)}
           onPlaying={() => setIsBuffering(false)}
-          className="w-full h-full object-contain"
+          className={`w-full h-full ${isFullscreen ? "object-contain" : "object-cover"}`}
           playsInline
           preload="auto"
         />
@@ -336,7 +343,6 @@ export const VideoPlayer = React.forwardRef<HTMLVideoElement, VideoPlayerProps>(
                   handleSeek(percent * duration);
                 }}
               >
-                {/* Buffered (could be added) */}
                 {/* Progress fill */}
                 <div
                   className="absolute top-0 left-0 h-full bg-gradient-to-r from-primary-500 to-primary-400 rounded-full transition-all duration-100"

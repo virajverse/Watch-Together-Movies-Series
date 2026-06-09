@@ -17,6 +17,15 @@ const nextConfig = {
       },
     ],
   },
+  // Handle simple-peer (uses Node.js APIs not available in SSR)
+  webpack: (config, { isServer }) => {
+    if (isServer) {
+      // Don't bundle simple-peer on server side
+      config.externals = config.externals || [];
+      config.externals.push('simple-peer');
+    }
+    return config;
+  },
 };
 
 export default nextConfig;

@@ -63,8 +63,8 @@ export function setupChatHandlers(
       return;
     }
 
-    // Validate emoji (only allow our predefined set)
-    const allowedEmojis = ["😂", "❤️", "😱", "🔥", "👍"];
+    // Validate emoji (allow common emojis)
+    const allowedEmojis = ["😂", "❤️", "😱", "🔥", "👍", "😍", "🎉", "😢", "💯", "🙌", "👏", "🤯"];
     if (!allowedEmojis.includes(emoji)) return;
 
     const reaction: EmojiReaction = {

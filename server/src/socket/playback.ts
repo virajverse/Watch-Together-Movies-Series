@@ -6,6 +6,33 @@
 import { Socket, Server as SocketIOServer } from "socket.io";
 import type { RoomState } from "../../../shared/types.ts";
 import { SOCKET_EVENTS } from "../../../shared/constants.ts";
+import { supabase } from "../lib/supabase.ts";
+
+/**
+ * Persist room state to Supabase (fire-and-forget)
+ */
+async function persistRoomState(room: RoomState) {
+  if (!supabase) return;
+
+  try {
+    await supabase.from("rooms").upsert({
+      id: room.id,
+      video_url: room.videoUrl || null,
+      status: room.playbackState.isPlaying ? "playing" : "paused",
+      last_activity: new Date().toISOString(),
+    }, { onConflict: "id" });
+
+    await supabase.from("room_sessions").upsert({
+      room_id: room.id,
+      is_playing: room.playbackState.isPlaying,
+      playback_time: room.playbackState.currentTime,
+      last_updated_at: new Date().toISOString(),
+      updated_by: room.playbackState.updatedBy,
+    }, { onConflict: "room_id" });
+  } catch (err: any) {
+    console.warn("[DB] Room persist failed:", err?.message);
+  }
+}
 
 export function setupPlaybackHandlers(
   socket: Socket,
@@ -37,6 +64,9 @@ export function setupPlaybackHandlers(
       lastUpdatedAt: Date.now(),
       updatedBy: userId,
     };
+
+    // Persist to Supabase
+    persistRoomState(room);
 
     const timestamp_ms = Date.now();
 
@@ -77,6 +107,9 @@ export function setupPlaybackHandlers(
       updatedBy: userId,
     };
 
+    // Persist to Supabase
+    persistRoomState(room);
+
     const timestamp_ms = Date.now();
 
     console.log(
@@ -115,6 +148,9 @@ export function setupPlaybackHandlers(
       updatedBy: userId,
     };
 
+    // Persist to Supabase
+    persistRoomState(room);
+
     const timestamp_ms = Date.now();
 
     console.log(
@@ -150,6 +186,9 @@ export function setupPlaybackHandlers(
     };
 
     console.log(`[PLAYBACK] Video changed by ${userId} in room ${roomId}: ${videoUrl.substring(0, 50)}...`);
+
+    // Persist to Supabase
+    persistRoomState(room);
 
     // Broadcast to ALL users in room (including sender for confirmation)
     io.to(roomId).emit("video-changed", { userId, videoUrl });

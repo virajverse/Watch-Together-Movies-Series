@@ -1,6 +1,12 @@
 /**
- * Room Hook
- * Manages room state, user management, and reconnection
+ * Room Hook — Simplified
+ *
+ * ONLY handles:
+ * - Join/leave room
+ * - User list management
+ * - Room state (videoUrl, hostId, playbackState)
+ * - Reconnect (rejoin room)
+ * - NO playback mutations whatsoever
  */
 
 import { useState, useEffect, useCallback } from "react";
@@ -50,8 +56,7 @@ export function useRoom({ roomId, userId }: UseRoomOptions) {
     const handleUserJoined = (user: RoomUser) => {
       console.log("[ROOM] User joined:", user.id.substring(0, 8));
       setUsers((prev) => {
-        // Prevent duplicates
-        if (prev.find(u => u.id === user.id)) return prev;
+        if (prev.find((u) => u.id === user.id)) return prev;
         return [...prev, user];
       });
     };
@@ -66,13 +71,22 @@ export function useRoom({ roomId, userId }: UseRoomOptions) {
       setUsers(roomData.users);
     };
 
+    const handleHostChanged = (data: { newHostId: string; previousHostId: string }) => {
+      console.log("[ROOM] Host changed to:", data.newHostId.substring(0, 8));
+      setUsers((prev) =>
+        prev.map((u) => ({
+          ...u,
+          isHost: u.id === data.newHostId,
+        }))
+      );
+    };
+
     const handleError = (data: { message: string; code?: string }) => {
       console.error("[ROOM] Error:", data.message);
       setError(data.message);
       setIsLoading(false);
     };
 
-    // Reconnect handler - rejoin room on reconnect
     const handleReconnect = () => {
       console.log("[ROOM] Reconnected, rejoining room...");
       if (roomId && userId) {
@@ -84,6 +98,7 @@ export function useRoom({ roomId, userId }: UseRoomOptions) {
     socketClient.on(SOCKET_EVENTS.USER_JOINED, handleUserJoined);
     socketClient.on(SOCKET_EVENTS.USER_LEFT, handleUserLeft);
     socketClient.on(SOCKET_EVENTS.ROOM_STATE_UPDATED, handleRoomStateUpdated);
+    socketClient.on(SOCKET_EVENTS.HOST_CHANGED as any, handleHostChanged);
     socketClient.on(SOCKET_EVENTS.ERROR, handleError);
     socketClient.on("connect" as any, handleReconnect);
 
@@ -92,6 +107,7 @@ export function useRoom({ roomId, userId }: UseRoomOptions) {
       socketClient.off(SOCKET_EVENTS.USER_JOINED, handleUserJoined);
       socketClient.off(SOCKET_EVENTS.USER_LEFT, handleUserLeft);
       socketClient.off(SOCKET_EVENTS.ROOM_STATE_UPDATED, handleRoomStateUpdated);
+      socketClient.off(SOCKET_EVENTS.HOST_CHANGED as any, handleHostChanged);
       socketClient.off(SOCKET_EVENTS.ERROR, handleError);
       socketClient.off("connect" as any, handleReconnect);
     };

@@ -19,13 +19,64 @@ export function setupRoomHandlers(
    * Handler: join-room
    * User joins a room or creates if doesn't exist
    */
-  socket.on(SOCKET_EVENTS.JOIN_ROOM, (data: { roomId: string; userId: string }) => {
+  socket.on(SOCKET_EVENTS.JOIN_ROOM, async (data: { roomId: string; userId: string }) => {
     const { roomId, userId } = data;
 
     console.log(`[ROOM] User ${userId} attempting to join room ${roomId}`);
 
     // Get or create room
     let room = rooms.get(roomId);
+
+    if (!room) {
+      // Try to load from Supabase first
+      try {
+        const { supabase } = await import("../lib/supabase.ts");
+        if (supabase) {
+          const { data: dbRoom } = await supabase
+            .from("rooms")
+            .select("*")
+            .eq("id", roomId)
+            .single();
+
+          if (dbRoom) {
+            // Also load playback state from room_sessions
+            let playbackState = {
+              isPlaying: false,
+              currentTime: 0,
+              lastUpdatedAt: Date.now(),
+              updatedBy: "system",
+            };
+
+            const { data: session } = await supabase
+              .from("room_sessions")
+              .select("*")
+              .eq("room_id", roomId)
+              .single();
+
+            if (session) {
+              playbackState = {
+                isPlaying: session.is_playing,
+                currentTime: session.playback_time,
+                lastUpdatedAt: new Date(session.last_updated_at).getTime(),
+                updatedBy: session.updated_by || "system",
+              };
+            }
+
+            room = {
+              id: roomId,
+              createdAt: new Date(dbRoom.created_at).getTime(),
+              users: [],
+              videoUrl: dbRoom.video_url || undefined,
+              playbackState,
+            };
+            rooms.set(roomId, room);
+            console.log(`[ROOM] Loaded room from Supabase: ${roomId} (video: ${dbRoom.video_url ? "yes" : "no"}, time: ${playbackState.currentTime.toFixed(1)}s)`);
+          }
+        }
+      } catch (err) {
+        // Supabase load failed, create fresh room
+      }
+    }
 
     if (!room) {
       // Create new room in memory
@@ -41,6 +92,21 @@ export function setupRoomHandlers(
         },
       };
       rooms.set(roomId, room);
+
+      // Save to Supabase
+      try {
+        const { supabase } = await import("../lib/supabase.ts");
+        if (supabase) {
+          await supabase.from("rooms").upsert({
+            id: roomId,
+            status: "waiting",
+            last_activity: new Date().toISOString(),
+          }).select();
+        }
+      } catch (err) {
+        // DB save failed, continue with in-memory
+      }
+
       console.log(`[ROOM] Created new room: ${roomId}`);
     }
 
@@ -156,7 +222,6 @@ export function setupRoomHandlers(
         // If host left, promote next user
         if (removedUser.isHost && room.users.length > 0) {
           room.users[0].isHost = true;
-          // Notify all users about host change
           io.to(roomId).emit("host-changed", {
             newHostId: room.users[0].id,
             previousHostId: removedUser.id,
@@ -167,7 +232,6 @@ export function setupRoomHandlers(
           `[ROOM] User ${removedUser.id} disconnected from room ${roomId}. Total users: ${room.users.length}`
         );
 
-        // Broadcast to remaining users
         io.to(roomId).emit(SOCKET_EVENTS.USER_LEFT, {
           userId: removedUser.id,
           userCount: room.users.length,
@@ -176,5 +240,49 @@ export function setupRoomHandlers(
         break;
       }
     }
+  });
+
+  /**
+   * Handler: kick-user
+   * Host kicks a user from the room
+   */
+  socket.on("kick-user", (data: { roomId: string; userId: string; targetUserId: string }) => {
+    const { roomId, userId, targetUserId } = data;
+
+    const room = rooms.get(roomId);
+    if (!room) return;
+
+    // Verify sender is host
+    const sender = room.users.find((u) => u.id === userId);
+    if (!sender || !sender.isHost) {
+      socket.emit(SOCKET_EVENTS.ERROR, { message: "Only host can kick users" });
+      return;
+    }
+
+    // Find target user
+    const targetIndex = room.users.findIndex((u) => u.id === targetUserId);
+    if (targetIndex === -1) return;
+
+    const targetUser = room.users[targetIndex];
+
+    // Remove from room
+    room.users.splice(targetIndex, 1);
+
+    // Send kick notification to target's socket
+    io.to(targetUser.socketId).emit("kicked");
+
+    // Make target leave the socket.io room
+    const targetSocket = io.sockets.sockets.get(targetUser.socketId);
+    if (targetSocket) {
+      targetSocket.leave(roomId);
+    }
+
+    console.log(`[ROOM] Host kicked user ${targetUserId} from room ${roomId}`);
+
+    // Broadcast user left
+    io.to(roomId).emit(SOCKET_EVENTS.USER_LEFT, {
+      userId: targetUserId,
+      userCount: room.users.length,
+    });
   });
 }

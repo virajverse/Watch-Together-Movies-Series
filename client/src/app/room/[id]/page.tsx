@@ -1,16 +1,18 @@
 "use client";
 
 /**
- * Room Page [id]
- * Main watching experience - cinema-style layout
+ * Room Page [id] — Ready Check Architecture
  *
  * Flow:
- * 1. Connect to socket
- * 2. Get/create userId from session
- * 3. Show autoplay unlock overlay (one-time)
- * 4. Join room via socket
- * 5. After unlock, all sync events work automatically
- * 6. MVP3: Voice/video chat, live chat, emoji reactions
+ * 1. Connect to socket → join room
+ * 2. room-joined received → set videoUrl from room.videoUrl
+ * 3. VideoPlayer loads the URL
+ * 4. Host clicks play → their video plays (user gesture ✅)
+ * 5. Socket broadcasts play-event to guests
+ * 6. Guest sees "▶ Tap to sync" pill overlay on video
+ * 7. Guest taps pill → video.currentTime + video.play() (user gesture ✅)
+ * 8. Pill disappears → video plays in sync
+ * 9. Pause/seek work automatically (no gesture needed)
  */
 
 import React, { useEffect, useRef, useState } from "react";
@@ -22,13 +24,11 @@ import { useVideoSync } from "../../../hooks/useVideoSync";
 import { useWebRTC } from "../../../hooks/useWebRTC";
 import { useChat } from "../../../hooks/useChat";
 import { VideoPlayer } from "../../../components/VideoPlayer";
-import { RoomHeader } from "../../../components/RoomHeader";
-import { UsersConnected } from "../../../components/UsersConnected";
-import { AutoplayUnlock } from "../../../components/AutoplayUnlock";
 import { CameraBubbles } from "../../../components/CameraBubbles";
 import { MediaControls } from "../../../components/MediaControls";
 import { ChatPanel } from "../../../components/ChatPanel";
 import { EmojiReactions } from "../../../components/EmojiReactions";
+import { VideoPickerModal } from "../../../components/VideoPickerModal";
 import { SOCKET_EVENTS } from "../../../../shared/constants";
 
 export default function RoomPage() {
@@ -42,38 +42,53 @@ export default function RoomPage() {
   // Video player ref
   const videoPlayerRef = useRef<HTMLVideoElement>(null);
 
-  // State
+  // ─── State ──────────────────────────────────────────────────────────────────
   const [userId, setUserId] = useState<string>("");
-  const [videoUrl, setVideoUrl] = useState<string>(
-    "https://www.w3schools.com/html/mov_bbb.mp4"
-  );
+  const [username, setUsername] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      return sessionStorage.getItem("username") || "";
+    }
+    return "";
+  });
+  const [usernameInput, setUsernameInput] = useState("");
+  const [hasJoined, setHasJoined] = useState(false);
+  const [videoUrl, setVideoUrl] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      const saved = sessionStorage.getItem(`room_${roomId}_videoUrl`);
+      if (saved) return saved;
+    }
+    return "https://www.w3schools.com/html/mov_bbb.mp4";
+  });
   const [urlInput, setUrlInput] = useState<string>(videoUrl);
   const [showUrlInput, setShowUrlInput] = useState(false);
+  const [showVideoPicker, setShowVideoPicker] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
-  const [playbackUnlocked, setPlaybackUnlocked] = useState(false);
-  const [isChatOpen, setIsChatOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [mobileTab, setMobileTab] = useState<"chat" | "reactions" | "members">("chat");
-  const [isVideoSticky, setIsVideoSticky] = useState(false);
-  const videoWrapperRef = useRef<HTMLDivElement>(null);
   const [showInviteCopied, setShowInviteCopied] = useState(false);
+  const [isVideoPlaying, setIsVideoPlaying] = useState(false);
 
-  // Custom hooks
+  // ─── Custom hooks ───────────────────────────────────────────────────────────
   const { room, users, error: roomError, isLoading, joinRoom } = useRoom({
     roomId,
     userId: userId || "",
   });
 
+  // Derive isHost from room users
+  const isHost = users.find((u) => u.id === userId)?.isHost ?? false;
+
   const {
     broadcastPlay,
     broadcastPause,
     broadcastSeek,
-    markPlaybackReady,
-    syncReady,
-    syncStatus,
+    syncPermission,
+    grantPermission,
+    denyPermission,
+    revokePermission,
   } = useVideoSync({
     roomId,
     userId: userId || "",
+    isHost,
     playerRef: videoPlayerRef,
   });
 
@@ -98,36 +113,34 @@ export default function RoomPage() {
     userId: userId || "",
   });
 
-  // Track unread messages when chat is closed
+  // ─── Track unread messages ──────────────────────────────────────────────────
   useEffect(() => {
-    if (!isChatOpen && messages.length > 0) {
+    if (mobileTab !== "chat" && messages.length > 0) {
       setUnreadCount((prev) => prev + 1);
     }
   }, [messages.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Reset unread when chat opens
   useEffect(() => {
-    if (isChatOpen || mobileTab === "chat") {
+    if (mobileTab === "chat") {
       setUnreadCount(0);
     }
-  }, [isChatOpen, mobileTab]);
+  }, [mobileTab]);
 
-  // Sticky video detection on mobile
+  // ─── Track video play/pause state for bottom bar icon ───────────────────────
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const handleScroll = () => {
-      if (videoWrapperRef.current) {
-        const rect = videoWrapperRef.current.getBoundingClientRect();
-        setIsVideoSticky(rect.top <= 0);
-      }
+    const video = videoPlayerRef.current;
+    if (!video) return;
+    const onPlay = () => setIsVideoPlaying(true);
+    const onPause = () => setIsVideoPlaying(false);
+    video.addEventListener("play", onPlay);
+    video.addEventListener("pause", onPause);
+    return () => {
+      video.removeEventListener("play", onPlay);
+      video.removeEventListener("pause", onPause);
     };
-    window.addEventListener("scroll", handleScroll, { passive: true });
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, []);
+  });
 
-  /**
-   * Initialize on mount
-   */
+  // ─── Initialize on mount ────────────────────────────────────────────────────
   useEffect(() => {
     let stored = sessionStorage.getItem("userId");
     if (!stored) {
@@ -152,24 +165,31 @@ export default function RoomPage() {
     initSocket();
   }, []);
 
-  /**
-   * Join room when userId and socket are ready
-   */
+  // ─── Join room when userId and socket are ready AND username set ──────────
   useEffect(() => {
-    if (userId && isConnected) {
+    if (userId && isConnected && username) {
       joinRoom();
+      setHasJoined(true);
     }
-  }, [userId, isConnected, joinRoom]);
+  }, [userId, isConnected, username, joinRoom]);
 
-  /**
-   * Listen for video change from other users
-   */
+  // ─── Video URL sync: ONE simple effect ──────────────────────────────────────
+  useEffect(() => {
+    if (room?.videoUrl && room.videoUrl !== videoUrl) {
+      setVideoUrl(room.videoUrl);
+      setUrlInput(room.videoUrl);
+      sessionStorage.setItem(`room_${roomId}_videoUrl`, room.videoUrl);
+    }
+  }, [room?.videoUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ─── Listen for video change from other users ───────────────────────────────
   useEffect(() => {
     const handleVideoChanged = (data: { userId: string; videoUrl: string }) => {
       if (data.userId !== userId) {
         console.log(`[ROOM] Video changed by ${data.userId.substring(0, 6)} to: ${data.videoUrl}`);
         setVideoUrl(data.videoUrl);
         setUrlInput(data.videoUrl);
+        sessionStorage.setItem(`room_${roomId}_videoUrl`, data.videoUrl);
       }
     };
 
@@ -177,32 +197,20 @@ export default function RoomPage() {
     return () => {
       socketClient.off("video-changed" as any, handleVideoChanged);
     };
-  }, [userId]);
+  }, [userId, roomId]);
 
-  /**
-   * Handle autoplay unlock success
-   */
-  const handlePlaybackUnlocked = () => {
-    setPlaybackUnlocked(true);
-    markPlaybackReady();
-    console.log("[ROOM] ✅ Playback unlocked - sync is now active");
-  };
-
-  /**
-   * Handle video URL update - broadcast to all users in room
-   */
+  // ─── Handle video URL update — broadcast to all users ───────────────────────
   const handleUpdateVideoUrl = (e: React.FormEvent) => {
     e.preventDefault();
     if (urlInput.trim()) {
       setVideoUrl(urlInput);
       setShowUrlInput(false);
       socketClient.emit("video-change" as any, { roomId, userId, videoUrl: urlInput });
+      sessionStorage.setItem(`room_${roomId}_videoUrl`, urlInput);
     }
   };
 
-  /**
-   * Handle leave room
-   */
+  // ─── Handle leave room ──────────────────────────────────────────────────────
   const handleLeaveRoom = () => {
     if (isInVoice) {
       leaveVoice();
@@ -211,9 +219,7 @@ export default function RoomPage() {
     router.push("/");
   };
 
-  /**
-   * Copy invite link
-   */
+  // ─── Copy invite link ───────────────────────────────────────────────────────
   const handleCopyInvite = async () => {
     const roomUrl = `${window.location.origin}/room/${roomId}?code=${roomCode}`;
     try {
@@ -225,9 +231,7 @@ export default function RoomPage() {
     }
   };
 
-  /**
-   * Toggle play/pause on video
-   */
+  // ─── Toggle play/pause (host only via MediaControls) ────────────────────────
   const handleTogglePlayPause = () => {
     const video = videoPlayerRef.current;
     if (!video) return;
@@ -238,14 +242,72 @@ export default function RoomPage() {
     }
   };
 
-  /**
-   * Force sync
-   */
+  // ─── Force sync (re-broadcast seek) ────────────────────────────────────────
   const handleForceSync = () => {
-    // Re-broadcast current time to force everyone to sync
     broadcastSeek();
   };
 
+  // ─── Handle username submit ──────────────────────────────────────────────
+  const handleUsernameSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (usernameInput.trim().length >= 2) {
+      const name = usernameInput.trim();
+      setUsername(name);
+      sessionStorage.setItem("username", name);
+    }
+  };
+
+  // ─── Handle kick user (host only) ──────────────────────────────────────────
+  const handleKickUser = (targetUserId: string) => {
+    if (!isHost) return;
+    socketClient.emit("kick-user" as any, { roomId, userId, targetUserId });
+  };
+
+  // ─── Listen for kick event ─────────────────────────────────────────────────
+  useEffect(() => {
+    const handleKicked = () => {
+      alert("You have been removed from the room by the host.");
+      router.push("/");
+    };
+    socketClient.on("kicked" as any, handleKicked);
+    return () => { socketClient.off("kicked" as any, handleKicked); };
+  }, [router]);
+
+  // ─── Username entry screen ───────────────────────────────────────────────
+  if (!username) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4">
+        <div className="max-w-sm w-full text-center animate-fade-in">
+          <div className="w-14 h-14 mx-auto mb-5 rounded-full bg-primary-500/20 border border-primary-500/30 flex items-center justify-center">
+            <svg className="w-7 h-7 text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+            </svg>
+          </div>
+          <h2 className="text-xl font-bold text-white mb-2">Enter your name</h2>
+          <p className="text-gray-400 text-sm mb-6">This will be shown to others in the room</p>
+          <form onSubmit={handleUsernameSubmit} className="space-y-3">
+            <input
+              type="text"
+              value={usernameInput}
+              onChange={(e) => setUsernameInput(e.target.value)}
+              placeholder="Your name..."
+              maxLength={20}
+              autoFocus
+              className="w-full bg-dark-800/80 border border-surface-glass-border text-white text-center text-lg px-4 py-3 rounded-xl placeholder-gray-500 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/20 outline-none"
+            />
+            <button
+              type="submit"
+              disabled={usernameInput.trim().length < 2}
+              className="w-full py-3 px-6 rounded-xl font-semibold bg-gradient-to-r from-primary-600 to-primary-500 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-all active:scale-95"
+            >
+              Join Room
+            </button>
+          </form>
+          <p className="text-gray-600 text-[10px] mt-4">Minimum 2 characters</p>
+        </div>
+      </div>
+    );
+  }
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -261,21 +323,53 @@ export default function RoomPage() {
   // =========================================================================
   // RENDER
   // =========================================================================
+
+  // Sync Permission Prompt — shown once, saved to localStorage
+  const SyncPermissionPrompt = () => {
+    if (syncPermission !== "pending") return null;
+    return (
+      <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-dark-950/90 backdrop-blur-md animate-fade-in">
+        <div className="max-w-sm w-full mx-6 text-center animate-scale-in">
+          <div className="w-16 h-16 mx-auto mb-5 rounded-full bg-primary-500/20 border border-primary-500/30 flex items-center justify-center">
+            <svg className="w-8 h-8 text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+            </svg>
+          </div>
+          <h2 className="text-xl font-bold text-white mb-2">Allow Sync Playback?</h2>
+          <p className="text-gray-400 text-sm mb-6 leading-relaxed">
+            Allow the host to control video playback for everyone in this room.
+            <br />
+            <span className="text-gray-500 text-xs">Play, pause, and seek will sync automatically.</span>
+          </p>
+          <div className="flex gap-3">
+            <button
+              onClick={denyPermission}
+              className="flex-1 py-3 px-4 rounded-xl text-sm font-medium text-gray-400 bg-dark-700/80 hover:bg-dark-600 border border-surface-glass-border transition-colors"
+            >
+              Not now
+            </button>
+            <button
+              onClick={grantPermission}
+              className="flex-1 py-3 px-4 rounded-xl text-sm font-bold text-white bg-gradient-to-r from-primary-600 to-primary-500 hover:from-primary-500 hover:to-primary-400 shadow-glow-sm transition-all active:scale-95"
+            >
+              Allow
+            </button>
+          </div>
+          <p className="text-gray-600 text-[10px] mt-4">You can revoke this anytime</p>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen">
-      {/* Autoplay Unlock Overlay - shows once */}
-      {!playbackUnlocked && (
-        <AutoplayUnlock
-          videoRef={videoPlayerRef}
-          onUnlocked={handlePlaybackUnlocked}
-        />
-      )}
+      {/* Sync Permission Prompt — one-time, saved to localStorage */}
+      <SyncPermissionPrompt />
 
-      {/* ===== MOBILE LAYOUT (< lg) ===== */}
-      <div className="lg:hidden flex flex-col min-h-screen">
+      {/* ===== SINGLE RESPONSIVE LAYOUT ===== */}
+      <div className="flex flex-col h-screen overflow-hidden max-w-4xl mx-auto">
         {/* 1. HEADER */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-surface-glass-border bg-dark-900/80 backdrop-blur-md sticky top-0 z-50">
-          {/* Back button */}
           <button
             onClick={() => router.push("/")}
             className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-surface-glass-hover transition-colors"
@@ -285,19 +379,35 @@ export default function RoomPage() {
             </svg>
           </button>
 
-          {/* Title */}
           <div className="flex-1 text-center">
             <h1 className="text-white font-semibold text-sm truncate">
               Movie Night 🎬
             </h1>
           </div>
 
-          {/* Right: watching count + invite */}
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1.5">
               <div className="w-2 h-2 bg-emerald-400 rounded-full" />
               <span className="text-emerald-400 text-xs font-medium">{users.length} watching</span>
             </div>
+            <button
+              onClick={() => setShowUrlInput(!showUrlInput)}
+              className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-surface-glass-hover transition-colors"
+              title="Change video URL"
+            >
+              <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m9.86-2.556a4.5 4.5 0 00-1.242-7.244l-4.5-4.5a4.5 4.5 0 00-6.364 6.364L4.343 8.69" />
+              </svg>
+            </button>
+            <button
+              onClick={() => { setShowUrlInput(false); setShowVideoPicker(true); }}
+              className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-surface-glass-hover transition-colors"
+              title="Pick from library"
+            >
+              <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0112 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m17.25-3.75h-7.5c-.621 0-1.125.504-1.125 1.125m8.625-1.125c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5" />
+              </svg>
+            </button>
             <button
               onClick={handleCopyInvite}
               className="w-8 h-8 flex items-center justify-center rounded-full bg-primary-600/20 hover:bg-primary-600/30 border border-primary-500/30 transition-colors"
@@ -315,6 +425,52 @@ export default function RoomPage() {
           </div>
         </div>
 
+        {/* Video URL Input (mobile) */}
+        {showUrlInput && (
+          <div className="px-3 py-2 border-b border-surface-glass-border bg-dark-900/60 animate-slide-down">
+            <form onSubmit={handleUpdateVideoUrl} className="flex gap-2">
+              <input
+                type="text"
+                value={urlInput}
+                onChange={(e) => setUrlInput(e.target.value)}
+                placeholder="Paste video URL or HLS link..."
+                className="flex-1 bg-dark-800/80 border border-surface-glass-border text-white text-xs px-3 py-2 rounded-lg placeholder-gray-500 focus:border-primary-500/50 outline-none"
+              />
+              <button type="submit" className="px-3 py-2 bg-primary-600 hover:bg-primary-500 text-white rounded-lg text-xs font-semibold transition-colors">
+                Load
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowUrlInput(false); setShowVideoPicker(true); }}
+                className="px-3 py-2 bg-dark-700 hover:bg-dark-600 border border-surface-glass-border text-gray-300 hover:text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5"
+                title="Pick from library"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0112 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m17.25-3.75h-7.5c-.621 0-1.125.504-1.125 1.125m8.625-1.125c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5" />
+                </svg>
+                Library
+              </button>
+              <button type="button" onClick={() => setShowUrlInput(false)} className="px-2 py-2 text-gray-400 hover:text-white rounded-lg text-xs transition-colors">
+                ✕
+              </button>
+            </form>
+          </div>
+        )}
+
+        {/* Video Picker Modal */}
+        {showVideoPicker && (
+          <VideoPickerModal
+            onSelect={(streamUrl) => {
+              setVideoUrl(streamUrl);
+              setUrlInput(streamUrl);
+              setShowVideoPicker(false);
+              socketClient.emit("video-change" as any, { roomId, userId, videoUrl: streamUrl });
+              sessionStorage.setItem(`room_${roomId}_videoUrl`, streamUrl);
+            }}
+            onClose={() => setShowVideoPicker(false)}
+          />
+        )}
+
         {/* 2. CAMERA BUBBLES ROW */}
         <CameraBubbles
           peers={peers.map((p) => ({
@@ -330,33 +486,19 @@ export default function RoomPage() {
         />
 
         {/* 3. VIDEO PLAYER */}
-        <div ref={videoWrapperRef} className="relative w-full">
+        <div className="relative w-full flex-shrink-0">
           <VideoPlayer
             ref={videoPlayerRef}
             videoUrl={videoUrl}
             onPlay={broadcastPlay}
             onPause={broadcastPause}
             onSeek={broadcastSeek}
+            isHost={isHost}
           />
-          {/* Emoji Reactions Overlay */}
           <EmojiReactions reactions={reactions} />
         </div>
 
-        {/* Sync Status Banner (compact) */}
-        {syncStatus === "playback-blocked" && (
-          <div className="mx-3 mt-2 glass-card rounded-lg p-2 border-amber-500/20">
-            <div className="flex items-center gap-2">
-              <span className="text-amber-400 text-xs">⚠️ Playback blocked</span>
-              <button
-                onClick={() => setPlaybackUnlocked(false)}
-                className="text-amber-400 text-xs font-semibold ml-auto"
-              >
-                Fix
-              </button>
-            </div>
-          </div>
-        )}
-
+        {/* Error banner */}
         {roomError && (
           <div className="mx-3 mt-2 glass-card rounded-lg p-2 border-red-500/20">
             <p className="text-red-300 text-xs">{roomError}</p>
@@ -406,22 +548,21 @@ export default function RoomPage() {
         </div>
 
         {/* 5. TAB CONTENT */}
-        <div className="flex-1 overflow-y-auto pb-20">
-          {/* Chat Tab */}
+        <div className="flex-1 min-h-0 overflow-hidden">
           {mobileTab === "chat" && (
-            <ChatPanel
-              messages={messages}
-              currentUserId={userId}
-              onSendMessage={sendMessage}
-              onSendReaction={sendReaction}
-              embedded
-            />
+            <div className="h-full flex flex-col">
+              <ChatPanel
+                messages={messages}
+                currentUserId={userId}
+                onSendMessage={sendMessage}
+                onSendReaction={sendReaction}
+                embedded
+              />
+            </div>
           )}
 
-          {/* Reactions Tab */}
           {mobileTab === "reactions" && (
-            <div className="p-4 space-y-4">
-              {/* Quick reaction grid */}
+            <div className="p-4 space-y-4 overflow-y-auto h-full">
               <div className="grid grid-cols-4 gap-3">
                 {["😂", "❤️", "🔥", "😱", "👍", "😍", "🎉", "😢", "💯", "🙌", "👏", "🤯"].map((emoji) => (
                   <button
@@ -434,7 +575,6 @@ export default function RoomPage() {
                 ))}
               </div>
 
-              {/* Recent reactions */}
               {reactions.length > 0 && (
                 <div>
                   <h4 className="text-gray-400 text-xs font-medium mb-2">Recent Reactions</h4>
@@ -456,9 +596,22 @@ export default function RoomPage() {
             </div>
           )}
 
-          {/* Members Tab */}
           {mobileTab === "members" && (
-            <div className="p-4 space-y-2">
+            <div className="p-4 space-y-2 overflow-y-auto h-full">
+              {/* Room playback status */}
+              {room && (
+                <div className="flex items-center justify-between p-3 rounded-xl bg-primary-500/10 border border-primary-500/20 mb-3">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2.5 h-2.5 rounded-full ${room.playbackState.isPlaying ? "bg-emerald-400 animate-pulse" : "bg-gray-500"}`} />
+                    <span className="text-white text-xs font-medium">
+                      {room.playbackState.isPlaying ? "▶ Playing" : "⏸ Paused"}
+                    </span>
+                  </div>
+                  <span className="text-primary-300 text-xs font-mono">
+                    {Math.floor(room.playbackState.currentTime / 60)}:{Math.floor(room.playbackState.currentTime % 60).toString().padStart(2, "0")}
+                  </span>
+                </div>
+              )}
               {users.map((user, index) => {
                 const isMe = user.id === userId;
                 const peerMedia = peers.find((p) => p.peerId === user.id);
@@ -474,7 +627,6 @@ export default function RoomPage() {
                     className="flex items-center justify-between p-3 rounded-xl bg-dark-800/40 border border-surface-glass-border"
                   >
                     <div className="flex items-center gap-3">
-                      {/* Avatar */}
                       <div className={`relative w-10 h-10 rounded-full bg-gradient-to-br ${
                         ["from-blue-500 to-indigo-600", "from-purple-500 to-pink-600", "from-emerald-500 to-teal-600", "from-orange-500 to-red-600", "from-cyan-500 to-blue-600"][index % 5]
                       } flex items-center justify-center text-white text-sm font-bold`}>
@@ -483,10 +635,9 @@ export default function RoomPage() {
                           <div className="absolute -inset-0.5 rounded-full border-2 border-emerald-400 animate-pulse" />
                         )}
                       </div>
-                      {/* Name + badges */}
                       <div>
                         <p className="text-white text-sm font-medium flex items-center gap-1.5">
-                          {isMe ? "You" : `User ${user.id.substring(0, 6)}`}
+                          {isMe ? username || "You" : `User ${user.id.substring(0, 6)}`}
                           {isMe && (
                             <span className="text-[9px] bg-primary-500/20 text-primary-400 px-1.5 py-0.5 rounded-full">you</span>
                           )}
@@ -499,7 +650,6 @@ export default function RoomPage() {
                         </p>
                       </div>
                     </div>
-                    {/* Media status icons */}
                     <div className="flex items-center gap-1.5">
                       {mediaState?.isInVoice && (
                         <div className={`w-6 h-6 rounded-full flex items-center justify-center ${mediaState.isMicOn ? "bg-emerald-500/20" : "bg-red-500/20"}`}>
@@ -514,6 +664,18 @@ export default function RoomPage() {
                             <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
                           </svg>
                         </div>
+                      )}
+                      {/* Kick button (host only, not self) */}
+                      {isHost && !isMe && (
+                        <button
+                          onClick={() => handleKickUser(user.id)}
+                          className="w-6 h-6 rounded-full bg-red-500/10 hover:bg-red-500/20 flex items-center justify-center transition-colors"
+                          title="Kick user"
+                        >
+                          <svg className="w-3 h-3 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
                       )}
                     </div>
                   </div>
@@ -538,250 +700,11 @@ export default function RoomPage() {
           onLeaveRoom={handleLeaveRoom}
           permissionError={permissionError}
           layout="bottom-bar"
-          videoRef={videoPlayerRef}
+          isVideoPlaying={isVideoPlaying}
+          isHost={isHost}
         />
       </div>
 
-      {/* ===== DESKTOP LAYOUT (lg+) ===== */}
-      <div className="hidden lg:block p-3 md:p-5 lg:p-6">
-        <div className="max-w-[1600px] mx-auto">
-          {/* Room Header */}
-          {room && (
-            <RoomHeader
-              roomId={roomId}
-              roomCode={roomCode}
-              userCount={users.length}
-            />
-          )}
-
-          {/* Sync Status Banners */}
-          {syncStatus === "playback-blocked" && (
-            <div className="glass-card rounded-xl p-3 mb-4 border-amber-500/20 animate-slide-up">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-amber-500/10 flex items-center justify-center flex-shrink-0">
-                  <svg className="w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
-                  </svg>
-                </div>
-                <p className="text-amber-300 text-sm flex-1">Playback permission lost.</p>
-                <button
-                  onClick={() => setPlaybackUnlocked(false)}
-                  className="text-amber-400 hover:text-amber-300 text-sm font-semibold px-3 py-1 rounded-lg hover:bg-amber-500/10 transition-colors"
-                >
-                  Re-enable
-                </button>
-              </div>
-            </div>
-          )}
-
-          {playbackUnlocked && syncReady && (
-            <div className="glass-card rounded-xl p-2.5 mb-4 border-emerald-500/20 animate-fade-in">
-              <div className="flex items-center gap-2.5 px-2">
-                <div className="relative">
-                  <div className="w-2 h-2 bg-emerald-400 rounded-full" />
-                  <div className="absolute inset-0 w-2 h-2 bg-emerald-400 rounded-full animate-ping opacity-75" />
-                </div>
-                <p className="text-emerald-400 text-xs font-medium">Sync active — playback events sync in real-time</p>
-              </div>
-            </div>
-          )}
-
-          {/* Error Display */}
-          {roomError && (
-            <div className="glass-card rounded-xl p-4 mb-5 border-red-500/20 animate-slide-up">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-red-500/10 flex items-center justify-center flex-shrink-0">
-                  <svg className="w-4 h-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-                  </svg>
-                </div>
-                <p className="text-red-300 text-sm">{roomError}</p>
-              </div>
-            </div>
-          )}
-
-          {/* Main Content - Cinema Layout */}
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5">
-            {/* Video Player Area */}
-            <div className="space-y-4">
-              <div className="relative">
-                <VideoPlayer
-                  ref={videoPlayerRef}
-                  videoUrl={videoUrl}
-                  onPlay={broadcastPlay}
-                  onPause={broadcastPause}
-                  onSeek={broadcastSeek}
-                />
-                {/* Camera Bubbles - top right over video */}
-                <CameraBubbles
-                  peers={peers.map((p) => ({
-                    peerId: p.peerId,
-                    stream: p.stream,
-                    isMicOn: p.isMicOn,
-                    isCameraOn: p.isCameraOn,
-                  }))}
-                  localStream={localStream}
-                  isCameraOn={isCameraOn}
-                  currentUserId={userId}
-                />
-                {/* Emoji Reactions Overlay */}
-                <EmojiReactions reactions={reactions} />
-              </div>
-
-              {/* Media Controls - Voice/Camera */}
-              <MediaControls
-                isInVoice={isInVoice}
-                isMicOn={isMicOn}
-                isCameraOn={isCameraOn}
-                isSpeaking={isSpeaking}
-                onJoinVoice={joinVoice}
-                onLeaveVoice={leaveVoice}
-                onToggleMic={toggleMic}
-                onToggleCamera={toggleCamera}
-                permissionError={permissionError}
-              />
-
-              {/* Video URL Controls */}
-              <div className="flex items-center gap-3 flex-wrap">
-                {!showUrlInput ? (
-                  <>
-                    <button
-                      onClick={() => setShowUrlInput(true)}
-                      className="flex items-center gap-2 text-gray-400 hover:text-primary-400 text-sm font-medium transition-colors px-3 py-2 rounded-xl hover:bg-surface-glass-hover"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m9.86-2.556a4.5 4.5 0 00-1.242-7.244l-4.5-4.5a4.5 4.5 0 00-6.364 6.364L4.343 8.69" />
-                      </svg>
-                      Paste URL
-                    </button>
-                    <button
-                      onClick={async () => {
-                        const API_URL = process.env.NEXT_PUBLIC_WS_URL || "http://localhost:3001";
-                        try {
-                          const res = await fetch(`${API_URL}/api/videos`);
-                          const data = await res.json();
-                          if (data.success && data.data.length > 0) {
-                            const readyVideos = data.data.filter((v: any) => v.status === "ready");
-                            if (readyVideos.length === 0) {
-                              alert("No videos ready yet. Upload and process a video first.");
-                              return;
-                            }
-                            const names = readyVideos.map((v: any, i: number) => `${i + 1}. ${v.originalName}`).join("\n");
-                            const choice = prompt(`Select a video (enter number):\n\n${names}`);
-                            if (choice) {
-                              const idx = parseInt(choice) - 1;
-                              if (idx >= 0 && idx < readyVideos.length) {
-                                setVideoUrl(readyVideos[idx].streamPath);
-                                setUrlInput(readyVideos[idx].streamPath);
-                                socketClient.emit("video-change" as any, { roomId, userId, videoUrl: readyVideos[idx].streamPath });
-                              }
-                            }
-                          } else {
-                            alert("No videos in library. Go to /upload to add videos.");
-                          }
-                        } catch {
-                          alert("Could not fetch video library. Is the server running?");
-                        }
-                      }}
-                      className="flex items-center gap-2 text-gray-400 hover:text-primary-400 text-sm font-medium transition-colors px-3 py-2 rounded-xl hover:bg-surface-glass-hover"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h1.5C5.496 19.5 6 18.996 6 18.375m-3.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-1.5A1.125 1.125 0 0118 18.375M20.625 4.5H3.375m17.25 0c.621 0 1.125.504 1.125 1.125M20.625 4.5h-1.5C18.504 4.5 18 5.004 18 5.625m3.75 0v1.5c0 .621-.504 1.125-1.125 1.125M3.375 4.5c-.621 0-1.125.504-1.125 1.125M3.375 4.5h1.5C5.496 4.5 6 5.004 6 5.625m-3.75 0v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m17.25-3.75h-7.5c-.621 0-1.125.504-1.125 1.125m8.625-1.125c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125M12 10.875v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125" />
-                      </svg>
-                      Browse Library
-                    </button>
-                  </>
-                ) : (
-                  <form onSubmit={handleUpdateVideoUrl} className="flex gap-2 flex-1 animate-slide-up">
-                    <input
-                      type="url"
-                      value={urlInput}
-                      onChange={(e) => setUrlInput(e.target.value)}
-                      placeholder="Enter video URL (MP4, WebM, M3U8)"
-                      className="flex-1 bg-dark-900/80 border border-surface-glass-border text-white px-4 py-2.5 rounded-xl text-sm placeholder-gray-500 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/20"
-                    />
-                    <button type="submit" className="px-4 py-2.5 bg-primary-600 hover:bg-primary-500 text-white rounded-xl text-sm font-semibold transition-colors">
-                      Load
-                    </button>
-                    <button type="button" onClick={() => setShowUrlInput(false)} className="px-3 py-2.5 text-gray-400 hover:text-white hover:bg-surface-glass-hover rounded-xl text-sm transition-colors">
-                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </form>
-                )}
-              </div>
-            </div>
-
-            {/* Sidebar */}
-            <div className="space-y-4">
-              {/* Chat Toggle Button */}
-              <button
-                onClick={() => setIsChatOpen(!isChatOpen)}
-                className={`w-full flex items-center justify-between py-3 px-4 rounded-xl text-sm font-medium transition-all duration-200 ${
-                  isChatOpen
-                    ? "bg-primary-600/20 text-primary-400 border border-primary-500/30"
-                    : "glass-card text-gray-300 hover:text-white"
-                }`}
-              >
-                <span className="flex items-center gap-2">
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" />
-                  </svg>
-                  {isChatOpen ? "Hide Chat" : "Show Chat"}
-                </span>
-                {!isChatOpen && unreadCount > 0 && (
-                  <span className="bg-primary-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
-                    {unreadCount > 99 ? "99+" : unreadCount}
-                  </span>
-                )}
-              </button>
-
-              {/* Chat Panel - toggleable */}
-              {isChatOpen && (
-                <ChatPanel
-                  messages={messages}
-                  currentUserId={userId}
-                  onSendMessage={sendMessage}
-                  onSendReaction={sendReaction}
-                />
-              )}
-
-              {/* Users */}
-              {room && (
-                <UsersConnected
-                  users={users}
-                  currentUserId={userId}
-                  mediaStates={peers.map((p) => ({
-                    oderId: p.peerId,
-                    isMicOn: p.isMicOn,
-                    isCameraOn: p.isCameraOn,
-                    isSpeaking: p.isSpeaking,
-                    isInVoice: true,
-                  }))}
-                  localMediaState={{
-                    isInVoice,
-                    isMicOn,
-                    isCameraOn,
-                    isSpeaking,
-                  }}
-                />
-              )}
-
-              {/* Leave Room */}
-              <button
-                onClick={handleLeaveRoom}
-                className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-medium text-gray-400 hover:text-red-400 bg-surface-glass hover:bg-red-500/10 border border-surface-glass-border hover:border-red-500/20 transition-all duration-200"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
-                </svg>
-                Leave Room
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

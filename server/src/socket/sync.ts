@@ -1,6 +1,13 @@
 /**
- * Socket.IO - Sync & Heartbeat Handlers
- * Maintains real-time sync across clients
+ * Socket.IO - Sync & Heartbeat Handlers — Simplified
+ *
+ * Heartbeat handler:
+ * - Updates user's lastSeen
+ * - Stores playback state from host (currentTime, isPlaying)
+ * - Sends room-state-updated ONLY to the requesting socket (not broadcast)
+ * - NEVER triggers force-sync from heartbeat
+ *
+ * Removed: playback-ready, playback-blocked handlers (not needed)
  */
 
 import { Socket, Server as SocketIOServer } from "socket.io";
@@ -13,9 +20,44 @@ export function setupSyncHandlers(
   rooms: Map<string, RoomState>
 ) {
   /**
+   * Handler: heartbeat
+   * Client sends current playback state periodically.
+   * - Update user's lastSeen
+   * - If from host, store playback state
+   * - Reply with room state to requesting socket only
+   */
+  socket.on(
+    SOCKET_EVENTS.HEARTBEAT,
+    (data: { roomId: string; userId: string; currentTime?: number; isPlaying?: boolean }) => {
+      const { roomId, userId, currentTime, isPlaying } = data;
+
+      const room = rooms.get(roomId);
+      if (!room) return;
+
+      // Update user's last seen time
+      const user = room.users.find((u) => u.id === userId);
+      if (!user) return;
+      user.lastSeen = Date.now();
+
+      // If this user is the host, store their playback state
+      if (user.isHost && currentTime !== undefined && isPlaying !== undefined) {
+        room.playbackState = {
+          isPlaying,
+          currentTime,
+          lastUpdatedAt: Date.now(),
+          updatedBy: userId,
+        };
+      }
+
+      // Send room state ONLY to the requesting socket (not broadcast)
+      socket.emit(SOCKET_EVENTS.ROOM_STATE_UPDATED, room);
+    }
+  );
+
+  /**
    * Handler: sync-time
-   * Client sends its current video timestamp
-   * Server calculates drift and responds with correction
+   * Client sends its current video timestamp.
+   * Server calculates drift and responds — no force-sync from heartbeat.
    */
   socket.on(
     SOCKET_EVENTS.SYNC_TIME,
@@ -30,14 +72,13 @@ export function setupSyncHandlers(
 
       const drift = Math.abs(timestamp - room.playbackState.currentTime);
 
-      // Check if drift exceeds threshold
-      if (drift > SYNC_CONFIG.FORCE_SYNC_THRESHOLD) {
+      // Only force-sync if drift > 1 second (not 500ms)
+      if (drift > 1) {
         console.log(
-          `[SYNC] Drift detected for ${userId} in ${roomId}: ${drift}ms (threshold: ${SYNC_CONFIG.FORCE_SYNC_THRESHOLD}ms)`
+          `[SYNC] Drift detected for ${userId} in ${roomId}: ${drift.toFixed(2)}s`
         );
-
-        // Force sync all clients in room
-        io.to(roomId).emit(SOCKET_EVENTS.FORCE_SYNC, room.playbackState);
+        // Send force-sync only to the drifted client
+        socket.emit(SOCKET_EVENTS.FORCE_SYNC, room.playbackState);
       }
 
       // Send back server time for client to calculate latency
@@ -48,58 +89,11 @@ export function setupSyncHandlers(
       });
     }
   );
-
-  /**
-   * Handler: heartbeat
-   * Periodic sync from client (every few seconds)
-   */
-  socket.on(SOCKET_EVENTS.HEARTBEAT, (data: { roomId: string; userId: string }) => {
-    const { roomId, userId } = data;
-
-    const room = rooms.get(roomId);
-    if (!room) return;
-
-    // Update user's last seen time
-    const user = room.users.find((u) => u.id === userId);
-    if (user) {
-      user.lastSeen = Date.now();
-    }
-
-    // Send full room state for consistency
-    socket.emit(SOCKET_EVENTS.ROOM_STATE_UPDATED, room);
-  });
-
-  /**
-   * Handler: playback-ready
-   * Client has unlocked autoplay and is ready for sync
-   */
-  socket.on("playback-ready", (data: { roomId: string; userId: string }) => {
-    const { roomId, userId } = data;
-    console.log(`[SYNC] User ${userId.substring(0, 8)} playback ready in room ${roomId.substring(0, 8)}`);
-
-    const room = rooms.get(roomId);
-    if (!room) return;
-
-    // Send current room state so new user syncs immediately
-    socket.emit(SOCKET_EVENTS.ROOM_STATE_UPDATED, room);
-
-    // If video is currently playing, send force sync
-    if (room.playbackState.isPlaying) {
-      socket.emit(SOCKET_EVENTS.FORCE_SYNC, room.playbackState);
-    }
-  });
-
-  /**
-   * Handler: playback-blocked
-   * Client's autoplay was blocked
-   */
-  socket.on("playback-blocked", (data: { roomId: string; userId: string }) => {
-    console.log(`[SYNC] User ${data.userId.substring(0, 8)} playback blocked in room ${data.roomId.substring(0, 8)}`);
-  });
 }
 
 /**
- * Start heartbeat server - broadcasts to all rooms periodically
+ * Start heartbeat server - periodic broadcast to all rooms
+ * Only sends server-heartbeat for monitoring, no playback mutations
  */
 export function startHeartbeatServer(io: SocketIOServer, rooms: Map<string, RoomState>) {
   setInterval(() => {
@@ -109,7 +103,6 @@ export function startHeartbeatServer(io: SocketIOServer, rooms: Map<string, Room
           serverTime: Date.now(),
           roomId,
           userCount: room.users.length,
-          playbackState: room.playbackState,
         });
       }
     });
